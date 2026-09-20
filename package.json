@@ -1,0 +1,11 @@
+{
+  "name": "prix-du-jour-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "API Cours Du Jour - viabilite de menu pour editeurs de caisse (OAuth2 + endpoints RLS)",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "@supabase/supabase-js": "^2.45.4"
+  }
+}
