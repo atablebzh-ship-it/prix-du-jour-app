@@ -22,6 +22,36 @@ const { getScopedClient, extractBearerToken } = require('../../../../lib/supabas
 //                                periode (regle classique du "menu engineering")
 // - profitability_threshold   = marge moyenne ponderee par les volumes
 //                                (marge totale generee / total des ventes)
+//
+// Chaque plat renvoie en plus un champ "recommendation" : une phrase prete a
+// afficher dans le logiciel de caisse, formulee sur le modele du document de
+// reference du projet (ex: "RISOTTO - STAR DE LA CARTE : 250 ventes x 17 EUR
+// de marge = 4 250 EUR generes. A conserver / mettre en avant.").
+function formatEUR(n) {
+  return `${Number(n).toFixed(2)} EUR`;
+}
+
+function buildRecommendation(row) {
+  const name = (row.menu_item_name || 'Ce plat').toUpperCase();
+  const margin = row.margin_per_item !== null ? Number(row.margin_per_item) : null;
+  const units = row.units_sold !== null ? Number(row.units_sold) : null;
+  const totalMargin = row.total_margin !== null ? Number(row.total_margin) : null;
+  const foodCostPct = row.food_cost_pct !== null ? Number(row.food_cost_pct) : null;
+
+  switch (row.classification) {
+    case 'star':
+      return `${name} - STAR DE LA CARTE : ${units} ventes x ${formatEUR(margin)} de marge = ${formatEUR(totalMargin)} generes. Forte popularite et excellente rentabilite -> a conserver et mettre en avant.`;
+    case 'rentable_peu_vendu':
+      return `${name} - RENTABLE MAIS PEU VENDU : marge unitaire correcte (${formatEUR(margin)}), mais seulement ${units} ventes sur la periode. Le probleme n'est peut-etre pas le cout matiere -> tester le prix, la presentation ou le positionnement du plat.`;
+    case 'populaire_peu_rentable':
+      return `${name} - POPULAIRE MAIS PEU RENTABLE : ${units} ventes, mais seulement ${formatEUR(margin)} de marge par plat${foodCostPct !== null ? ` (food cost ${foodCostPct}%)` : ''}. Priorite absolue -> revoir la recette ou ajuster le prix.`;
+    case 'a_revoir':
+      return `${name} - A ABANDONNER / REVOIR : peu vendu (${units} ventes) et peu rentable (${formatEUR(margin)} de marge). Envisager de retirer le plat de la carte ou de le repositionner completement.`;
+    default:
+      return `${name} : donnees insuffisantes sur cette periode (aucune vente enregistree, ou fiche technique/cout matiere incomplet) pour classer ce plat.`;
+  }
+}
+
 module.exports = async (req, res) => {
   if (req.method !== 'GET') {
     res.setHeader('Allow', 'GET');
@@ -88,6 +118,7 @@ module.exports = async (req, res) => {
     units_sold: row.units_sold,
     total_margin: row.total_margin,
     classification: row.classification,
+    recommendation: buildRecommendation(row),
   }));
 
   return res.status(200).json({
