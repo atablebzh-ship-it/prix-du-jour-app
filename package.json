@@ -3,9 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "description": "API Cours Du Jour - viabilite de menu pour editeurs de caisse (OAuth2 + endpoints RLS)",
+  "scripts": {
+    "test": "jest --coverage"
+  },
   "dependencies": {
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "@supabase/supabase-js": "^2.45.4"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "@babel/core": "^7.24.0",
+    "@babel/preset-env": "^7.24.0",
+    "babel-jest": "^29.7.0"
+  },
+  "babel": {
+    "presets": [["@babel/preset-env", { "targets": { "node": "current" } }]]
   }
 }
