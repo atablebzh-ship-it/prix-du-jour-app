@@ -436,7 +436,84 @@ caisse.
 
 ---
 
-## 10. Vue portefeuille (tous les etablissements de l'editeur)
+## 10. Historique et evolution dans le temps
+
+Permet de capturer des instantanes periodiques (prix, cout, marge, ventes,
+classification) pour chaque plat, puis de consulter leur evolution au fil
+du temps. C'est ce qui permet de repondre a des questions comme *"tu as
+vendu 1850 risottos cette annee"* ou *"ton cout matiere est passe de 4,80
+EUR a 5,35 EUR"*.
+
+### 10.1 POST /api/establishments/{establishmentId}/menu/snapshot
+
+Capture un instantane de tous les plats de l'etablissement pour la
+periode donnee, et le sauvegarde. A appeler periodiquement (ex : une fois
+par mois) par le logiciel de caisse. Un appel avec la meme periode
+ecrase (upsert) l'instantane precedent — pas de risque de doublon si
+l'appel est rejoue.
+
+**Parametres (query string, obligatoires)**
+
+| Parametre     | Description |
+|---------------|-------------|
+| `periodStart` | Debut de periode (YYYY-MM-DD) |
+| `periodEnd`   | Fin de periode (YYYY-MM-DD) |
+
+**Reponse (200)**
+
+```json
+{
+  "establishment_id": "...",
+  "period_start": "2026-09-01",
+  "period_end": "2026-09-30",
+  "snapshotted_count": 4
+}
+```
+
+### 10.2 GET /api/establishments/{establishmentId}/menu/history
+
+Renvoie l'historique complet des instantanes captures pour un plat, du
+plus ancien au plus recent, avec un resume : total des ventes cumulees
+sur tout l'historique, marge totale generee, et evolution entre le
+premier et le dernier instantane.
+
+**Parametres (query string, obligatoires)**
+
+| Parametre    | Description |
+|--------------|-------------|
+| `menuItemId` | Identifiant du plat |
+
+**Reponse (200)**
+
+```json
+{
+  "establishment_id": "...",
+  "menu_item_id": "...",
+  "menu_item_name": "Risotto",
+  "snapshots_count": 2,
+  "total_units_sold_all_time": 405,
+  "total_margin_generated_all_time": 7209.6,
+  "evolution": {
+    "from_period": { "start": "2026-08-01", "end": "2026-08-31" },
+    "to_period": { "start": "2026-09-15", "end": "2026-09-21" },
+    "price_change": 0,
+    "estimated_cost_change": 0.4,
+    "estimated_cost_change_pct": 10.2,
+    "margin_per_item_change": -0.4
+  },
+  "snapshots": [
+    { "period_start": "2026-08-01", "period_end": "2026-08-31", "price": 22, "estimated_cost": 3.92, "food_cost_pct": 17.82, "margin_per_item": 18.08, "units_sold": 123, "total_margin": 2223.84, "classification": "star", "captured_at": "..." },
+    { "period_start": "2026-09-15", "period_end": "2026-09-21", "price": 22, "estimated_cost": 4.32, "food_cost_pct": 19.64, "margin_per_item": 17.68, "units_sold": 282, "total_margin": 4985.76, "classification": "star", "captured_at": "..." }
+  ]
+}
+```
+
+`evolution` n'est present que si au moins 2 instantanes existent pour ce
+plat ; `null` sinon.
+
+---
+
+## 11. Vue portefeuille (tous les etablissements de l'editeur)
 
 ### GET /api/portfolio/engineering
 
@@ -499,7 +576,7 @@ token (RLS) : aucun parametre d'editeur a fournir.
 
 ---
 
-## 11. Format des erreurs
+## 12. Format des erreurs
 
 Toutes les erreurs suivent le meme format :
 
@@ -519,7 +596,7 @@ Toutes les erreurs suivent le meme format :
 
 ---
 
-## 12. Exemple d'integration complete (onboarding + analyse)
+## 13. Exemple d'integration complete (onboarding + analyse)
 
 ```bash
 TOKEN=$(curl -s -X POST https://prix-du-jour-app.vercel.app/api/oauth/token \
@@ -559,10 +636,10 @@ curl -s https://prix-du-jour-app.vercel.app/api/establishments/$EST_ID/menu-item
 
 ---
 
-## 13. Feuille de route (transparence)
+## 14. Feuille de route (transparence)
 
 - [x] Vue portefeuille agregee (tous les etablissements d'un editeur)
-- [ ] Historique / tendance dans le temps (au-dela d'une seule periode)
+- [x] Historique / tendance dans le temps (au-dela d'une seule periode)
 - [ ] Webhooks (notification push au lieu de polling)
 - [ ] Endpoints de mise a jour / suppression (aujourd'hui : creation
       uniquement pour establishments, menus, menu_items, ingredients,
@@ -570,9 +647,9 @@ curl -s https://prix-du-jour-app.vercel.app/api/establishments/$EST_ID/menu-item
 
 **Note technique** : l'hebergement (plan Vercel Hobby, gratuit) limite a
 12 fonctions serverless par deploiement. Les endpoints
-`pricing-opportunities`, `price-risks`, `sales` et `engineering` sont
-regroupes dans un seul fichier (`menu/[action].js`) qui route en interne
-selon le segment d'URL, afin de rester sous cette limite tout en gardant
-les memes chemins d'API. Tout nouvel endpoint devra suivre le meme
-principe de regroupement, ou l'hebergement devra passer sur un plan
-payant.
+`pricing-opportunities`, `price-risks`, `sales`, `engineering`,
+`snapshot` et `history` sont regroupes dans un seul fichier
+(`menu/[action].js`) qui route en interne selon le segment d'URL, afin de
+rester sous cette limite tout en gardant les memes chemins d'API. Tout
+nouvel endpoint devra suivre le meme principe de regroupement, ou
+l'hebergement devra passer sur un plan payant.
