@@ -1,49 +1,51 @@
 const { getScopedClient, extractBearerToken } = require('../../../../../../lib/supabase');
 
-// POST   .../menu-items                       (creer)
-// PATCH  .../menu-items?menuItemId=...         (modifier)
-// DELETE .../menu-items?menuItemId=...         (supprimer)
+// POST   .../recipe-items                         (creer)
+// PATCH  .../recipe-items?recipeItemId=...         (modifier)
+// DELETE .../recipe-items?recipeItemId=...         (supprimer)
 //
-// PATCH/DELETE regroupes dans ce meme fichier (methode + query string
-// plutot qu'un segment d'URL supplementaire) pour rester sous la limite de
-// 12 fonctions serverless du plan Vercel Hobby.
+// Une ligne de fiche technique : quel ingredient, en quelle quantite. C'est
+// la somme des recipe_items d'un plat qui determine son cout matiere
+// estime (voir /viability et /price-simulation). PATCH/DELETE regroupes
+// dans ce meme fichier (methode + query string plutot qu'un segment d'URL
+// supplementaire) pour rester sous la limite de 12 fonctions serverless du
+// plan Vercel Hobby.
 module.exports = async (req, res) => {
   const accessToken = extractBearerToken(req);
   if (!accessToken) {
     return res.status(401).json({ error: 'invalid_token', error_description: 'en-tete Authorization: Bearer <token> requis' });
   }
 
-  const { establishmentId, menuId } = req.query;
-  if (!establishmentId || !menuId) {
-    return res.status(400).json({ error: 'invalid_request', error_description: 'establishmentId et menuId requis' });
+  const { establishmentId, menuItemId } = req.query;
+  if (!establishmentId || !menuItemId) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'establishmentId et menuItemId requis' });
   }
 
   const supabase = getScopedClient(accessToken);
 
-  // Verifie que le menu appartient bien a l'establishment demande, dans le
-  // perimetre autorise par RLS.
-  const { data: menu, error: menuError } = await supabase
-    .from('menus')
-    .select('id, establishment_id')
-    .eq('id', menuId)
+  // Verifie que le menu_item appartient bien a l'establishment demande.
+  const { data: menuItem, error: menuItemError } = await supabase
+    .from('menu_items')
+    .select('id, menu_id, menus!inner(establishment_id)')
+    .eq('id', menuItemId)
     .maybeSingle();
 
-  if (menuError) {
-    console.error('menu-items: erreur lookup menu', menuError);
+  if (menuItemError) {
+    console.error('recipe-items: erreur lookup menu_item', menuItemError);
     return res.status(500).json({ error: 'server_error' });
   }
-  if (!menu || menu.establishment_id !== establishmentId) {
-    return res.status(404).json({ error: 'not_found', error_description: 'menu introuvable pour cet etablissement' });
+  if (!menuItem || menuItem.menus.establishment_id !== establishmentId) {
+    return res.status(404).json({ error: 'not_found', error_description: 'plat introuvable pour cet etablissement' });
   }
 
   if (req.method === 'POST') {
-    return handleCreate(req, res, supabase, menuId);
+    return handleCreate(req, res, supabase, establishmentId, menuItemId);
   }
   if (req.method === 'PATCH') {
-    return handleUpdate(req, res, supabase, menuId);
+    return handleUpdate(req, res, supabase, menuItemId);
   }
   if (req.method === 'DELETE') {
-    return handleDelete(req, res, supabase, menuId);
+    return handleDelete(req, res, supabase, menuItemId);
   }
 
   res.setHeader('Allow', 'POST, PATCH, DELETE');
@@ -51,170 +53,132 @@ module.exports = async (req, res) => {
 };
 
 // Corps attendu :
-// { "name": "Risotto", "description": "Risotto cremeux", "price": 22.00, "position": 1 }
-// description et position sont optionnels (position = juste apres le
-// dernier plat existant sur cette carte).
-async function handleCreate(req, res, supabase, menuId) {
-  const { name, description, price: bodyPrice, position: bodyPosition } = req.body || {};
-  if (!name || typeof name !== 'string' || !name.trim()) {
-    return res.status(400).json({ error: 'invalid_request', error_description: 'name requis' });
+// { "ingredientId": "...", "quantity": 0.4, "unit": "kg" }
+async function handleCreate(req, res, supabase, establishmentId, menuItemId) {
+  const { ingredientId, quantity: bodyQuantity, unit } = req.body || {};
+  if (!ingredientId || typeof ingredientId !== 'string') {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'ingredientId requis' });
   }
-  const price = Number(bodyPrice);
-  if (!Number.isFinite(price) || price <= 0) {
-    return res.status(400).json({ error: 'invalid_request', error_description: 'price (nombre positif) requis' });
+  const quantity = Number(bodyQuantity);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'quantity (nombre positif) requis' });
   }
-  if (description !== undefined && typeof description !== 'string') {
-    return res.status(400).json({ error: 'invalid_request', error_description: 'description doit etre une chaine de caracteres' });
+  if (!unit || typeof unit !== 'string' || !unit.trim()) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'unit requis' });
   }
 
-  let position = bodyPosition;
-  if (position !== undefined) {
-    position = Number(position);
-    if (!Number.isInteger(position) || position < 1) {
-      return res.status(400).json({ error: 'invalid_request', error_description: 'position doit etre un entier >= 1' });
-    }
+  // Verifie que l'ingredient appartient bien au meme etablissement.
+  const { data: ingredient, error: ingredientError } = await supabase
+    .from('ingredients')
+    .select('id, establishment_id')
+    .eq('id', ingredientId)
+    .maybeSingle();
+
+  if (ingredientError) {
+    console.error('recipe-items: erreur lookup ingredient', ingredientError);
+    return res.status(500).json({ error: 'server_error' });
   }
-
-  if (position === undefined) {
-    const { data: lastItem, error: lastItemError } = await supabase
-      .from('menu_items')
-      .select('position')
-      .eq('menu_id', menuId)
-      .order('position', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (lastItemError) {
-      console.error('menu-items: erreur lookup last position', lastItemError);
-      return res.status(500).json({ error: 'server_error' });
-    }
-    position = lastItem ? lastItem.position + 1 : 1;
+  if (!ingredient || ingredient.establishment_id !== establishmentId) {
+    return res.status(404).json({ error: 'not_found', error_description: 'ingredient introuvable pour cet etablissement' });
   }
 
   const { data, error } = await supabase
-    .from('menu_items')
+    .from('recipe_items')
     .insert({
-      menu_id: menuId,
-      name: name.trim(),
-      description: description !== undefined ? description : null,
-      price,
-      position,
+      menu_item_id: menuItemId,
+      ingredient_id: ingredientId,
+      quantity,
+      unit: unit.trim(),
     })
-    .select('id, menu_id, name, description, price, position')
+    .select('id, menu_item_id, ingredient_id, quantity, unit')
     .single();
 
   if (error) {
-    console.error('menu-items: erreur insert', error);
+    console.error('recipe-items: erreur insert', error);
     return res.status(500).json({ error: 'server_error' });
   }
 
   return res.status(201).json(data);
 }
 
-// PATCH .../menu-items?menuItemId=...
-// Corps : { name?, description?, price?, position? } - au moins un champ requis.
-async function handleUpdate(req, res, supabase, menuId) {
-  const { menuItemId } = req.query;
-  if (!menuItemId || typeof menuItemId !== 'string') {
-    return res.status(400).json({ error: 'invalid_request', error_description: 'menuItemId (query string) requis' });
+// PATCH .../recipe-items?recipeItemId=...
+// Corps : { quantity?, unit? } - au moins un champ requis. Pour changer
+// l'ingredient d'une ligne, il est plus sur de la supprimer et d'en creer
+// une nouvelle (evite les incoherences de cout).
+async function handleUpdate(req, res, supabase, menuItemId) {
+  const { recipeItemId } = req.query;
+  if (!recipeItemId || typeof recipeItemId !== 'string') {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'recipeItemId (query string) requis' });
   }
 
-  const { name, description, price: bodyPrice, position: bodyPosition } = req.body || {};
+  const { quantity: bodyQuantity, unit } = req.body || {};
   const patch = {};
 
-  if (name !== undefined) {
-    if (typeof name !== 'string' || !name.trim()) {
-      return res.status(400).json({ error: 'invalid_request', error_description: 'name doit etre une chaine non vide' });
+  if (bodyQuantity !== undefined) {
+    const quantity = Number(bodyQuantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'quantity doit etre un nombre positif' });
     }
-    patch.name = name.trim();
+    patch.quantity = quantity;
   }
-  if (description !== undefined) {
-    if (description !== null && typeof description !== 'string') {
-      return res.status(400).json({ error: 'invalid_request', error_description: 'description doit etre une chaine de caracteres ou null' });
+  if (unit !== undefined) {
+    if (typeof unit !== 'string' || !unit.trim()) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'unit doit etre une chaine non vide' });
     }
-    patch.description = description;
-  }
-  if (bodyPrice !== undefined) {
-    const price = Number(bodyPrice);
-    if (!Number.isFinite(price) || price <= 0) {
-      return res.status(400).json({ error: 'invalid_request', error_description: 'price doit etre un nombre positif' });
-    }
-    patch.price = price;
-  }
-  if (bodyPosition !== undefined) {
-    const position = Number(bodyPosition);
-    if (!Number.isInteger(position) || position < 1) {
-      return res.status(400).json({ error: 'invalid_request', error_description: 'position doit etre un entier >= 1' });
-    }
-    patch.position = position;
+    patch.unit = unit.trim();
   }
   if (Object.keys(patch).length === 0) {
-    return res.status(400).json({ error: 'invalid_request', error_description: 'au moins un champ a modifier (name, description, price, position) est requis' });
+    return res.status(400).json({ error: 'invalid_request', error_description: 'au moins un champ a modifier (quantity, unit) est requis' });
   }
 
   const { data, error } = await supabase
-    .from('menu_items')
+    .from('recipe_items')
     .update(patch)
-    .eq('id', menuItemId)
-    .eq('menu_id', menuId)
-    .select('id, menu_id, name, description, price, position')
+    .eq('id', recipeItemId)
+    .eq('menu_item_id', menuItemId)
+    .select('id, menu_item_id, ingredient_id, quantity, unit')
     .maybeSingle();
 
   if (error) {
-    console.error('menu-items: erreur update', error);
+    console.error('recipe-items: erreur update', error);
     return res.status(500).json({ error: 'server_error' });
   }
   if (!data) {
-    return res.status(404).json({ error: 'not_found', error_description: 'plat introuvable pour cette carte' });
+    return res.status(404).json({ error: 'not_found', error_description: 'ligne de fiche technique introuvable pour ce plat' });
   }
 
   return res.status(200).json(data);
 }
 
-// DELETE .../menu-items?menuItemId=...
-//
-// Supprime un plat (cascade automatique en base pour menu_item_sales et
-// menu_item_period_snapshots). Les fiches techniques (recipe_items) de ce
-// plat n'ont pas de cascade automatique : elles sont supprimees
-// explicitement ici avant le plat lui-meme.
-async function handleDelete(req, res, supabase, menuId) {
-  const { menuItemId } = req.query;
-  if (!menuItemId || typeof menuItemId !== 'string') {
-    return res.status(400).json({ error: 'invalid_request', error_description: 'menuItemId (query string) requis' });
+// DELETE .../recipe-items?recipeItemId=...
+async function handleDelete(req, res, supabase, menuItemId) {
+  const { recipeItemId } = req.query;
+  if (!recipeItemId || typeof recipeItemId !== 'string') {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'recipeItemId (query string) requis' });
   }
 
-  const { data: menuItem, error: lookupError } = await supabase
-    .from('menu_items')
+  const { data: recipeItem, error: lookupError } = await supabase
+    .from('recipe_items')
     .select('id')
-    .eq('id', menuItemId)
-    .eq('menu_id', menuId)
+    .eq('id', recipeItemId)
+    .eq('menu_item_id', menuItemId)
     .maybeSingle();
 
   if (lookupError) {
-    console.error('menu-items: erreur lookup avant delete', lookupError);
+    console.error('recipe-items: erreur lookup avant delete', lookupError);
     return res.status(500).json({ error: 'server_error' });
   }
-  if (!menuItem) {
-    return res.status(404).json({ error: 'not_found', error_description: 'plat introuvable pour cette carte' });
-  }
-
-  const { error: recipeItemsDeleteError } = await supabase
-    .from('recipe_items')
-    .delete()
-    .eq('menu_item_id', menuItemId);
-
-  if (recipeItemsDeleteError) {
-    console.error('menu-items: erreur suppression recipe_items avant delete', recipeItemsDeleteError);
-    return res.status(500).json({ error: 'server_error' });
+  if (!recipeItem) {
+    return res.status(404).json({ error: 'not_found', error_description: 'ligne de fiche technique introuvable pour ce plat' });
   }
 
   const { error: deleteError } = await supabase
-    .from('menu_items')
+    .from('recipe_items')
     .delete()
-    .eq('id', menuItemId);
+    .eq('id', recipeItemId);
 
   if (deleteError) {
-    console.error('menu-items: erreur delete', deleteError);
+    console.error('recipe-items: erreur delete', deleteError);
     return res.status(500).json({ error: 'server_error' });
   }
 
