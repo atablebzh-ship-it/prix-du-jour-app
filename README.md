@@ -182,6 +182,47 @@ cout matiere estime.
 { "id": "...", "menu_item_id": "...", "ingredient_id": "...", "quantity": 0.3, "unit": "kg" }
 ```
 
+### 3.6 Modifier / supprimer une ressource (PATCH / DELETE)
+
+Chacune des 5 ressources ci-dessus (establishment, menu, menu-item,
+ingredient, recipe-item) supporte aussi `PATCH` (modification partielle)
+et `DELETE`, sur la **meme route** que la creation, en ciblant la
+ressource par un identifiant en **query string** plutot qu'un segment
+d'URL supplementaire (regroupement necessaire pour rester sous la limite
+de fonctions serverless du plan Vercel Hobby — voir la note technique en
+fin de document).
+
+| Ressource | PATCH / DELETE |
+|---|---|
+| Etablissement | `/api/establishments?establishmentId=...` |
+| Menu | `/api/establishments/{establishmentId}/menus?menuId=...` |
+| Plat | `/api/establishments/{establishmentId}/menus/{menuId}/menu-items?menuItemId=...` |
+| Ingredient | `/api/establishments/{establishmentId}/ingredients?ingredientId=...` |
+| Ligne de fiche technique | `/api/establishments/{establishmentId}/menu-items/{menuItemId}/recipe-items?recipeItemId=...` |
+
+**PATCH** : au moins un champ modifiable dans le corps (mêmes champs que
+la creation, tous optionnels). Renvoie la ressource a jour (200), ou
+`404 not_found` si elle n'existe pas / n'appartient pas a cet
+etablissement.
+
+**DELETE** : renvoie `204` (corps vide) si la suppression reussit,
+`404 not_found` si la ressource n'existe pas.
+
+Cascades et protections a connaitre :
+
+- Supprimer un **etablissement** supprime aussi ses menus, plats, ventes
+  et instantanes (cascade base de donnees), ainsi que ses ingredients et
+  fiches techniques (purges explicitement par l'API avant la suppression
+  finale). **Irreversible.**
+- Supprimer un **menu** supprime ses plats (et leurs ventes, instantanes,
+  fiches techniques).
+- Supprimer un **plat** supprime sa fiche technique (et ses ventes,
+  instantanes).
+- Supprimer un **ingredient** encore utilise dans une ou plusieurs
+  fiches techniques est **refuse** (`409 conflict`) — il faut d'abord
+  retirer les lignes de recette concernees, pour eviter de casser
+  silencieusement le calcul de cout d'un plat.
+
 ---
 
 ## 4. Viabilite d'un plat
@@ -576,7 +617,114 @@ token (RLS) : aucun parametre d'editeur a fournir.
 
 ---
 
-## 12. Format des erreurs
+## 12. Webhooks (notifications push)
+
+Alternative au polling : plutot que d'appeler regulierement
+`/menu/engineering` ou `/menu/price-risks` pour savoir si quelque chose a
+change, l'editeur peut s'abonner et etre notifie automatiquement.
+
+**Declenchement** : les webhooks se declenchent au moment de l'appel
+`POST /menu/snapshot` (section 10.1) — c'est deja le moment ou l'API
+recalcule les classifications de chaque plat, donc le point naturel pour
+detecter un changement. Il n'y a pas de job planifie ou de polling
+interne : sans appel a `/menu/snapshot`, aucun webhook n'est envoye.
+
+**Evenements disponibles**
+
+| Evenement | Declenche quand |
+|---|---|
+| `classification_change` | Un plat change de categorie menu engineering (ex: `star` -> `populaire_peu_rentable`) entre l'instantane precedent et le nouveau. |
+| `price_risk` | Un ingredient a augmente significativement (mêmes seuils que `/menu/price-risks`, par defaut 30 jours / +10%), menacant la marge d'un ou plusieurs plats. |
+| `price_opportunity` | Un ingredient a baisse significativement (mêmes seuils que `/menu/pricing-opportunities`, par defaut 30 jours / -5%). |
+
+### 12.1 POST /api/webhooks
+
+Cree un abonnement.
+
+**Corps**
+
+```json
+{ "url": "https://exemple-caisse.fr/webhooks/cours-du-jour", "events": ["classification_change", "price_risk", "price_opportunity"] }
+```
+
+`url` doit etre en `https://`. `events` est un tableau non vide parmi les
+3 valeurs ci-dessus.
+
+**Reponse (201)**
+
+```json
+{
+  "id": "...",
+  "url": "https://exemple-caisse.fr/webhooks/cours-du-jour",
+  "events": ["classification_change", "price_risk", "price_opportunity"],
+  "is_active": true,
+  "created_at": "...",
+  "secret": "bd0d2c5e..."
+}
+```
+
+`secret` n'est renvoye **qu'une seule fois**, a la creation. Il sert a
+verifier la signature HMAC-SHA256 jointe a chaque webhook recu (voir plus
+bas) — a conserver precieusement cote editeur, il n'est plus jamais
+renvoye ensuite (`GET`/`PATCH` le masquent).
+
+### 12.2 GET /api/webhooks
+
+Liste les abonnements de l'editeur authentifie (sans le `secret`).
+
+### 12.3 PATCH /api/webhooks?subscriptionId=...
+
+Corps : `{ "url"?, "events"?, "isActive"? }` — au moins un champ. Utile
+notamment pour desactiver temporairement un abonnement (`isActive: false`)
+sans le supprimer.
+
+### 12.4 DELETE /api/webhooks?subscriptionId=...
+
+Supprime l'abonnement. Renvoie `204`.
+
+### 12.5 Format d'un webhook recu
+
+Chaque appel groupe tous les evenements pertinents pour cet abonnement en
+un seul `POST` :
+
+```json
+{
+  "establishment_id": "...",
+  "establishment_name": "Bistrot du Port",
+  "sent_at": "2026-09-21T16:29:43.000Z",
+  "events": [
+    {
+      "type": "classification_change",
+      "menu_item_id": "...",
+      "menu_item_name": "Turbot",
+      "previous_classification": "star",
+      "new_classification": "rentable_peu_vendu",
+      "margin_per_item": 18,
+      "units_sold": 35
+    }
+  ]
+}
+```
+
+**En-tete `X-Webhook-Signature`** : `sha256=<hex>`, un HMAC-SHA256 du
+corps brut (avant parsing JSON) calcule avec le `secret` de l'abonnement.
+A recalculer cote editeur sur le corps brut recu pour verifier que
+l'appel vient bien de Cours Du Jour :
+
+```python
+import hmac, hashlib
+signature = hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+# comparer a la valeur apres "sha256=" dans l'en-tete recu
+```
+
+**Fiabilite** : un seul essai par evenement, timeout de 8 secondes,
+aucune retentative automatique en cas d'echec. Un webhook qui echoue ne
+fait jamais echouer l'appel `/menu/snapshot` lui-meme. Chaque tentative
+(succes ou echec) est journalisee cote serveur pour diagnostic.
+
+---
+
+## 13. Format des erreurs
 
 Toutes les erreurs suivent le meme format :
 
@@ -596,7 +744,7 @@ Toutes les erreurs suivent le meme format :
 
 ---
 
-## 13. Exemple d'integration complete (onboarding + analyse)
+## 14. Exemple d'integration complete (onboarding + analyse)
 
 ```bash
 TOKEN=$(curl -s -X POST https://prix-du-jour-app.vercel.app/api/oauth/token \
@@ -636,20 +784,26 @@ curl -s https://prix-du-jour-app.vercel.app/api/establishments/$EST_ID/menu-item
 
 ---
 
-## 14. Feuille de route (transparence)
+## 15. Feuille de route (transparence)
 
 - [x] Vue portefeuille agregee (tous les etablissements d'un editeur)
 - [x] Historique / tendance dans le temps (au-dela d'une seule periode)
-- [ ] Webhooks (notification push au lieu de polling)
-- [ ] Endpoints de mise a jour / suppression (aujourd'hui : creation
-      uniquement pour establishments, menus, menu_items, ingredients,
-      recipe_items)
+- [x] Endpoints de mise a jour / suppression (PATCH / DELETE sur
+      establishments, menus, menu_items, ingredients, recipe_items)
+- [x] Webhooks (notification push au lieu de polling)
 
 **Note technique** : l'hebergement (plan Vercel Hobby, gratuit) limite a
 12 fonctions serverless par deploiement. Les endpoints
 `pricing-opportunities`, `price-risks`, `sales`, `engineering`,
 `snapshot` et `history` sont regroupes dans un seul fichier
-(`menu/[action].js`) qui route en interne selon le segment d'URL, afin de
-rester sous cette limite tout en gardant les memes chemins d'API. Tout
-nouvel endpoint devra suivre le meme principe de regroupement, ou
-l'hebergement devra passer sur un plan payant.
+(`menu/[action].js`) qui route en interne selon le segment d'URL. Le
+PATCH/DELETE des 5 ressources d'onboarding (establishments, menus,
+menu-items, ingredients, recipe-items) est de la meme facon regroupe
+dans le fichier `index.js` deja existant de chaque ressource, en routant
+sur la methode HTTP + un identifiant en query string plutot qu'un
+segment d'URL supplementaire. La gestion des abonnements webhook
+(`api/webhooks/index.js`) est le seul veritable nouveau fichier de cette
+serie de fonctionnalites : on est passe de 10 a 11 fonctions serverless,
+il en reste 1 de marge sous la limite du plan gratuit. Tout nouvel
+endpoint devra suivre le meme principe de regroupement, ou l'hebergement
+devra passer sur un plan payant.
