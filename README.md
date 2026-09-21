@@ -436,7 +436,70 @@ caisse.
 
 ---
 
-## 10. Format des erreurs
+## 10. Vue portefeuille (tous les etablissements de l'editeur)
+
+### GET /api/portfolio/engineering
+
+Meme classification que la section 9, mais agregee sur **tous les
+etablissements** de l'editeur authentifie en un seul appel — pense pour un
+tableau de bord editeur qui gere plusieurs restaurants clients. Le
+perimetre est automatiquement limite aux etablissements de l'editeur du
+token (RLS) : aucun parametre d'editeur a fournir.
+
+**Parametres (query string, obligatoires)**
+
+| Parametre     | Description |
+|---------------|-------------|
+| `periodStart` | Debut de periode (YYYY-MM-DD) |
+| `periodEnd`   | Fin de periode (YYYY-MM-DD) |
+
+**Reponse (200)**
+
+```json
+{
+  "period_start": "2026-09-15",
+  "period_end": "2026-09-21",
+  "establishments_count": 2,
+  "items_count": 5,
+  "classification_counts": {
+    "star": 1,
+    "rentable_peu_vendu": 1,
+    "populaire_peu_rentable": 1,
+    "a_revoir": 1,
+    "donnees_insuffisantes": 1
+  },
+  "total_margin_across_portfolio": 8666.38,
+  "priority_items": [
+    {
+      "establishment_id": "...",
+      "establishment_name": "Restaurant de test (dev)",
+      "menu_item_id": "...",
+      "menu_item_name": "Entrecote",
+      "classification": "populaire_peu_rentable",
+      "margin_per_item": 12.105,
+      "units_sold": 200,
+      "recommendation": "ENTRECOTE - POPULAIRE MAIS PEU RENTABLE : ..."
+    }
+  ],
+  "establishments": [
+    {
+      "establishment_id": "...",
+      "establishment_name": "Restaurant de test (dev)",
+      "items": [ /* meme structure que la section 9, avec recommendation */ ]
+    }
+  ]
+}
+```
+
+- `priority_items` : tous les plats `populaire_peu_rentable` ou
+  `a_revoir`, tous etablissements confondus, tries par volume de ventes
+  decroissant — la ou concentrer l'attention en premier.
+- `total_margin_across_portfolio` : somme de la marge generee par tous
+  les plats classifies sur la periode, tous etablissements confondus.
+
+---
+
+## 11. Format des erreurs
 
 Toutes les erreurs suivent le meme format :
 
@@ -456,7 +519,7 @@ Toutes les erreurs suivent le meme format :
 
 ---
 
-## 11. Exemple d'integration complete (onboarding + analyse)
+## 12. Exemple d'integration complete (onboarding + analyse)
 
 ```bash
 TOKEN=$(curl -s -X POST https://prix-du-jour-app.vercel.app/api/oauth/token \
@@ -496,11 +559,20 @@ curl -s https://prix-du-jour-app.vercel.app/api/establishments/$EST_ID/menu-item
 
 ---
 
-## 12. Feuille de route (transparence)
+## 13. Feuille de route (transparence)
 
-- [ ] Vue portefeuille agregee (tous les etablissements d'un editeur)
+- [x] Vue portefeuille agregee (tous les etablissements d'un editeur)
 - [ ] Historique / tendance dans le temps (au-dela d'une seule periode)
 - [ ] Webhooks (notification push au lieu de polling)
 - [ ] Endpoints de mise a jour / suppression (aujourd'hui : creation
       uniquement pour establishments, menus, menu_items, ingredients,
       recipe_items)
+
+**Note technique** : l'hebergement (plan Vercel Hobby, gratuit) limite a
+12 fonctions serverless par deploiement. Les endpoints
+`pricing-opportunities`, `price-risks`, `sales` et `engineering` sont
+regroupes dans un seul fichier (`menu/[action].js`) qui route en interne
+selon le segment d'URL, afin de rester sous cette limite tout en gardant
+les memes chemins d'API. Tout nouvel endpoint devra suivre le meme
+principe de regroupement, ou l'hebergement devra passer sur un plan
+payant.
