@@ -1,5 +1,6 @@
 const { getScopedClient, extractBearerToken } = require('../../../../lib/supabase');
 const { buildRecommendation } = require('../../../../lib/recommendations');
+const { dispatchWebhookEvents } = require('../../../../lib/webhooks');
 
 // Ce fichier remplace 4 fichiers separes (pricing-opportunities.js,
 // price-risks.js, sales.js, engineering.js) par UNE seule fonction
@@ -15,6 +16,9 @@ const { buildRecommendation } = require('../../../../lib/recommendations');
 // - GET  /api/establishments/{id}/menu/engineering
 // - POST /api/establishments/{id}/menu/snapshot     (capture un instantane periodique)
 // - GET  /api/establishments/{id}/menu/history       (historique d'un plat dans le temps)
+//
+// snapshot declenche egalement les webhooks (voir lib/webhooks.js et le
+// fichier separe api/webhooks/index.js pour la gestion des abonnements).
 const dateRe = /^\d{4}-\d{2}-\d{2}$/;
 
 module.exports = async (req, res) => {
@@ -51,7 +55,7 @@ module.exports = async (req, res) => {
 async function getEstablishmentOr404(supabase, establishmentId, res) {
   const { data: establishment, error } = await supabase
     .from('establishments')
-    .select('id')
+    .select('id, name')
     .eq('id', establishmentId)
     .maybeSingle();
 
@@ -271,6 +275,15 @@ async function handleEngineering(req, res, supabase, establishmentId) {
 //
 // Un appel avec la meme periode ecrase (upsert) l'instantane precedent :
 // pas de risque de doublon si l'editeur rejoue l'appel.
+//
+// C'est aussi le point de declenchement des webhooks (voir lib/webhooks.js
+// et POST /api/webhooks) : apres avoir calcule le nouvel instantane, on le
+// compare au precedent pour detecter les changements de classification
+// ('classification_change'), et on verifie l'etat actuel des prix marche
+// pour detecter risques ('price_risk') et opportunites ('price_opportunity')
+// tarifaires. Les abonnements actifs pertinents sont notifies en un seul
+// appel HTTP signe (HMAC-SHA256), sans jamais faire echouer la reponse de
+// /menu/snapshot elle-meme si un webhook echoue.
 async function handleSnapshot(req, res, supabase, establishmentId) {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
@@ -288,7 +301,8 @@ async function handleSnapshot(req, res, supabase, establishmentId) {
     return res.status(400).json({ error: 'invalid_request', error_description: 'periodStart doit etre avant ou egal a periodEnd' });
   }
 
-  if (!(await getEstablishmentOr404(supabase, establishmentId, res))) return;
+  const establishment = await getEstablishmentOr404(supabase, establishmentId, res);
+  if (!establishment) return;
 
   const { data, error } = await supabase.rpc('menu_engineering_matrix', {
     p_establishment_id: establishmentId,
@@ -301,7 +315,8 @@ async function handleSnapshot(req, res, supabase, establishmentId) {
     return res.status(500).json({ error: 'server_error' });
   }
 
-  const rows = (data || []).map((row) => ({
+  const currentRows = data || [];
+  const rows = currentRows.map((row) => ({
     menu_item_id: row.menu_item_id,
     period_start: periodStart,
     period_end: periodEnd,
@@ -318,6 +333,31 @@ async function handleSnapshot(req, res, supabase, establishmentId) {
     return res.status(200).json({ establishment_id: establishmentId, period_start: periodStart, period_end: periodEnd, snapshotted_count: 0 });
   }
 
+  // Recupere, pour chaque plat, le dernier instantane STRICTEMENT anterieur
+  // a cette periode - c'est la base de comparaison pour detecter un
+  // changement de classification. On prend le plus recent par plat cote
+  // JS (pas de DISTINCT ON portable facilement via le client Supabase).
+  const menuItemIds = rows.map((r) => r.menu_item_id);
+  const { data: previousSnapshots, error: previousError } = await supabase
+    .from('menu_item_period_snapshots')
+    .select('menu_item_id, period_start, classification')
+    .in('menu_item_id', menuItemIds)
+    .lt('period_start', periodStart)
+    .order('period_start', { ascending: false });
+
+  if (previousError) {
+    console.error('menu/snapshot: erreur lookup instantanes precedents', previousError);
+    // Non bloquant pour la capture elle-meme : on continue sans detection
+    // de changement de classification plutot que de faire echouer l'appel.
+  }
+
+  const latestPreviousByItem = new Map();
+  for (const snap of previousSnapshots || []) {
+    if (!latestPreviousByItem.has(snap.menu_item_id)) {
+      latestPreviousByItem.set(snap.menu_item_id, snap.classification);
+    }
+  }
+
   const { data: inserted, error: insertError } = await supabase
     .from('menu_item_period_snapshots')
     .upsert(rows, { onConflict: 'menu_item_id,period_start,period_end' })
@@ -328,11 +368,70 @@ async function handleSnapshot(req, res, supabase, establishmentId) {
     return res.status(500).json({ error: 'server_error' });
   }
 
+  // Construit les evenements webhook a partir de cet instantane. Jamais
+  // bloquant : toute erreur ici est journalisee mais ne fait pas echouer
+  // la reponse HTTP de /menu/snapshot.
+  let webhookEventsDispatched = 0;
+  try {
+    const events = [];
+
+    for (const row of currentRows) {
+      const previousClassification = latestPreviousByItem.get(row.menu_item_id);
+      if (previousClassification && previousClassification !== row.classification) {
+        events.push({
+          type: 'classification_change',
+          menu_item_id: row.menu_item_id,
+          menu_item_name: row.menu_item_name,
+          previous_classification: previousClassification,
+          new_classification: row.classification,
+          margin_per_item: row.margin_per_item,
+          units_sold: row.units_sold,
+        });
+      }
+    }
+
+    const [{ data: risks }, { data: opportunities }] = await Promise.all([
+      supabase.rpc('menu_price_risks', { p_establishment_id: establishmentId, p_lookback_days: 30, p_min_increase_pct: 10 }),
+      supabase.rpc('menu_pricing_opportunities', { p_establishment_id: establishmentId, p_lookback_days: 30, p_min_drop_pct: 5 }),
+    ]);
+
+    for (const row of risks || []) {
+      events.push({
+        type: 'price_risk',
+        menu_item_id: row.menu_item_id,
+        menu_item_name: row.menu_item_name,
+        price: row.price,
+        food_cost_pct: row.food_cost_pct,
+        viable: row.viable,
+        risky_ingredients: row.risky_ingredients,
+      });
+    }
+    for (const row of opportunities || []) {
+      events.push({
+        type: 'price_opportunity',
+        menu_item_id: row.menu_item_id,
+        menu_item_name: row.menu_item_name,
+        price: row.price,
+        food_cost_pct: row.food_cost_pct,
+        viable: row.viable,
+        favorable_ingredients: row.favorable_ingredients,
+      });
+    }
+
+    if (events.length > 0) {
+      await dispatchWebhookEvents(supabase, establishmentId, establishment.name, events);
+      webhookEventsDispatched = events.length;
+    }
+  } catch (webhookError) {
+    console.error('menu/snapshot: erreur declenchement webhooks', webhookError);
+  }
+
   return res.status(200).json({
     establishment_id: establishmentId,
     period_start: periodStart,
     period_end: periodEnd,
     snapshotted_count: (inserted || []).length,
+    webhook_events_dispatched: webhookEventsDispatched,
   });
 }
 
