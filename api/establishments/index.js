@@ -1,79 +1,186 @@
-const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
-const { getScopedClient, extractBearerToken } = require('../../lib/supabase');
+const { getScopedClient, extractBearerToken } = require('../../../../../../lib/supabase');
 
-// POST /api/establishments
+// POST   .../recipe-items                         (creer)
+// PATCH  .../recipe-items?recipeItemId=...         (modifier)
+// DELETE .../recipe-items?recipeItemId=...         (supprimer)
 //
-// Cree un nouvel etablissement (restaurant) pour l'editeur de caisse
-// authentifie. C'est le point d'entree de l'onboarding : rien d'autre
-// (menu, plat, ingredient, fiche technique) ne peut etre cree sans un
-// establishment_id valide.
-//
-// L'establishment cree est automatiquement rattache a l'editeur du token
-// (pos_editor_id), jamais fourni par le client - impossible de creer un
-// etablissement pour un autre editeur.
-function slugify(text) {
-  return text
-    .toString()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/(^-|-$)/g, '');
-}
-
+// Une ligne de fiche technique : quel ingredient, en quelle quantite. C'est
+// la somme des recipe_items d'un plat qui determine son cout matiere
+// estime (voir /viability et /price-simulation). PATCH/DELETE regroupes
+// dans ce meme fichier (methode + query string plutot qu'un segment d'URL
+// supplementaire) pour rester sous la limite de 12 fonctions serverless du
+// plan Vercel Hobby.
 module.exports = async (req, res) => {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow', 'POST');
-    return res.status(405).json({ error: 'method_not_allowed' });
-  }
-
   const accessToken = extractBearerToken(req);
   if (!accessToken) {
     return res.status(401).json({ error: 'invalid_token', error_description: 'en-tete Authorization: Bearer <token> requis' });
   }
 
-  // Le token a deja ete verifie cryptographiquement par Supabase (meme
-  // secret HS256) au moment ou la requete arrive a PostgREST - on peut donc
-  // se contenter de decoder localement pour recuperer editeur_id sans
-  // reverifier la signature ici.
-  let editeurId;
-  try {
-    const payload = jwt.decode(accessToken);
-    editeurId = payload && payload.editeur_id;
-  } catch (err) {
-    editeurId = null;
-  }
-  if (!editeurId) {
-    return res.status(401).json({ error: 'invalid_token', error_description: 'token invalide ou editeur_id manquant' });
+  const { establishmentId, menuItemId } = req.query;
+  if (!establishmentId || !menuItemId) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'establishmentId et menuItemId requis' });
   }
 
-  const { name, foodCostTarget } = req.body || {};
-  if (!name || typeof name !== 'string' || !name.trim()) {
-    return res.status(400).json({ error: 'invalid_request', error_description: 'name requis' });
-  }
-
-  let target = 30;
-  if (foodCostTarget !== undefined) {
-    target = Number(foodCostTarget);
-    if (!Number.isFinite(target) || target <= 0 || target > 100) {
-      return res.status(400).json({ error: 'invalid_request', error_description: 'foodCostTarget doit etre un nombre entre 0 et 100' });
-    }
-  }
-
-  const slug = `${slugify(name)}-${crypto.randomBytes(3).toString('hex')}`;
   const supabase = getScopedClient(accessToken);
 
+  // Verifie que le menu_item appartient bien a l'establishment demande.
+  const { data: menuItem, error: menuItemError } = await supabase
+    .from('menu_items')
+    .select('id, menu_id, menus!inner(establishment_id)')
+    .eq('id', menuItemId)
+    .maybeSingle();
+
+  if (menuItemError) {
+    console.error('recipe-items: erreur lookup menu_item', menuItemError);
+    return res.status(500).json({ error: 'server_error' });
+  }
+  if (!menuItem || menuItem.menus.establishment_id !== establishmentId) {
+    return res.status(404).json({ error: 'not_found', error_description: 'plat introuvable pour cet etablissement' });
+  }
+
+  if (req.method === 'POST') {
+    return handleCreate(req, res, supabase, establishmentId, menuItemId);
+  }
+  if (req.method === 'PATCH') {
+    return handleUpdate(req, res, supabase, menuItemId);
+  }
+  if (req.method === 'DELETE') {
+    return handleDelete(req, res, supabase, menuItemId);
+  }
+
+  res.setHeader('Allow', 'POST, PATCH, DELETE');
+  return res.status(405).json({ error: 'method_not_allowed' });
+};
+
+// Corps attendu :
+// { "ingredientId": "...", "quantity": 0.4, "unit": "kg" }
+async function handleCreate(req, res, supabase, establishmentId, menuItemId) {
+  const { ingredientId, quantity: bodyQuantity, unit } = req.body || {};
+  if (!ingredientId || typeof ingredientId !== 'string') {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'ingredientId requis' });
+  }
+  const quantity = Number(bodyQuantity);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'quantity (nombre positif) requis' });
+  }
+  if (!unit || typeof unit !== 'string' || !unit.trim()) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'unit requis' });
+  }
+
+  // Verifie que l'ingredient appartient bien au meme etablissement.
+  const { data: ingredient, error: ingredientError } = await supabase
+    .from('ingredients')
+    .select('id, establishment_id')
+    .eq('id', ingredientId)
+    .maybeSingle();
+
+  if (ingredientError) {
+    console.error('recipe-items: erreur lookup ingredient', ingredientError);
+    return res.status(500).json({ error: 'server_error' });
+  }
+  if (!ingredient || ingredient.establishment_id !== establishmentId) {
+    return res.status(404).json({ error: 'not_found', error_description: 'ingredient introuvable pour cet etablissement' });
+  }
+
   const { data, error } = await supabase
-    .from('establishments')
-    .insert({ name: name.trim(), slug, pos_editor_id: editeurId, food_cost_target: target })
-    .select('id, name, slug, food_cost_target')
+    .from('recipe_items')
+    .insert({
+      menu_item_id: menuItemId,
+      ingredient_id: ingredientId,
+      quantity,
+      unit: unit.trim(),
+    })
+    .select('id, menu_item_id, ingredient_id, quantity, unit')
     .single();
 
   if (error) {
-    console.error('establishments: erreur insert', error);
+    console.error('recipe-items: erreur insert', error);
     return res.status(500).json({ error: 'server_error' });
   }
 
   return res.status(201).json(data);
-};
+}
+
+// PATCH .../recipe-items?recipeItemId=...
+// Corps : { quantity?, unit? } - au moins un champ requis. Pour changer
+// l'ingredient d'une ligne, il est plus sur de la supprimer et d'en creer
+// une nouvelle (evite les incoherences de cout).
+async function handleUpdate(req, res, supabase, menuItemId) {
+  const { recipeItemId } = req.query;
+  if (!recipeItemId || typeof recipeItemId !== 'string') {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'recipeItemId (query string) requis' });
+  }
+
+  const { quantity: bodyQuantity, unit } = req.body || {};
+  const patch = {};
+
+  if (bodyQuantity !== undefined) {
+    const quantity = Number(bodyQuantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'quantity doit etre un nombre positif' });
+    }
+    patch.quantity = quantity;
+  }
+  if (unit !== undefined) {
+    if (typeof unit !== 'string' || !unit.trim()) {
+      return res.status(400).json({ error: 'invalid_request', error_description: 'unit doit etre une chaine non vide' });
+    }
+    patch.unit = unit.trim();
+  }
+  if (Object.keys(patch).length === 0) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'au moins un champ a modifier (quantity, unit) est requis' });
+  }
+
+  const { data, error } = await supabase
+    .from('recipe_items')
+    .update(patch)
+    .eq('id', recipeItemId)
+    .eq('menu_item_id', menuItemId)
+    .select('id, menu_item_id, ingredient_id, quantity, unit')
+    .maybeSingle();
+
+  if (error) {
+    console.error('recipe-items: erreur update', error);
+    return res.status(500).json({ error: 'server_error' });
+  }
+  if (!data) {
+    return res.status(404).json({ error: 'not_found', error_description: 'ligne de fiche technique introuvable pour ce plat' });
+  }
+
+  return res.status(200).json(data);
+}
+
+// DELETE .../recipe-items?recipeItemId=...
+async function handleDelete(req, res, supabase, menuItemId) {
+  const { recipeItemId } = req.query;
+  if (!recipeItemId || typeof recipeItemId !== 'string') {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'recipeItemId (query string) requis' });
+  }
+
+  const { data: recipeItem, error: lookupError } = await supabase
+    .from('recipe_items')
+    .select('id')
+    .eq('id', recipeItemId)
+    .eq('menu_item_id', menuItemId)
+    .maybeSingle();
+
+  if (lookupError) {
+    console.error('recipe-items: erreur lookup avant delete', lookupError);
+    return res.status(500).json({ error: 'server_error' });
+  }
+  if (!recipeItem) {
+    return res.status(404).json({ error: 'not_found', error_description: 'ligne de fiche technique introuvable pour ce plat' });
+  }
+
+  const { error: deleteError } = await supabase
+    .from('recipe_items')
+    .delete()
+    .eq('id', recipeItemId);
+
+  if (deleteError) {
+    console.error('recipe-items: erreur delete', deleteError);
+    return res.status(500).json({ error: 'server_error' });
+  }
+
+  return res.status(204).end();
+}
