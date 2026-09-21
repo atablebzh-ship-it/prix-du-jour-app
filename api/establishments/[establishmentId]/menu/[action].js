@@ -13,6 +13,8 @@ const { buildRecommendation } = require('../../../../lib/recommendations');
 // - GET  /api/establishments/{id}/menu/price-risks
 // - POST /api/establishments/{id}/menu/sales
 // - GET  /api/establishments/{id}/menu/engineering
+// - POST /api/establishments/{id}/menu/snapshot     (capture un instantane periodique)
+// - GET  /api/establishments/{id}/menu/history       (historique d'un plat dans le temps)
 const dateRe = /^\d{4}-\d{2}-\d{2}$/;
 
 module.exports = async (req, res) => {
@@ -37,6 +39,10 @@ module.exports = async (req, res) => {
       return handleSales(req, res, supabase, establishmentId);
     case 'engineering':
       return handleEngineering(req, res, supabase, establishmentId);
+    case 'snapshot':
+      return handleSnapshot(req, res, supabase, establishmentId);
+    case 'history':
+      return handleHistory(req, res, supabase, establishmentId);
     default:
       return res.status(404).json({ error: 'not_found', error_description: 'route inconnue' });
   }
@@ -250,5 +256,160 @@ async function handleEngineering(req, res, supabase, establishmentId) {
     popularity_threshold: items.length ? data[0].popularity_threshold : null,
     profitability_threshold: items.length ? data[0].profitability_threshold : null,
     items,
+  });
+}
+
+// POST .../menu/snapshot?periodStart=YYYY-MM-DD&periodEnd=YYYY-MM-DD
+//
+// Capture un instantane (prix, cout, marge, ventes, classification) de
+// chaque plat de l'etablissement pour la periode donnee, et le sauvegarde
+// dans menu_item_period_snapshots. A appeler periodiquement (ex: une fois
+// par mois) par l'editeur de caisse pour construire un historique dans le
+// temps - c'est ce qui permet ensuite /menu/history de repondre a des
+// questions comme "tu as vendu 1850 risottos cette annee" ou "ton cout
+// matiere est passe de 4.80 EUR a 5.35 EUR".
+//
+// Un appel avec la meme periode ecrase (upsert) l'instantane precedent :
+// pas de risque de doublon si l'editeur rejoue l'appel.
+async function handleSnapshot(req, res, supabase, establishmentId) {
+  if (req.method !== 'POST') {
+    res.setHeader('Allow', 'POST');
+    return res.status(405).json({ error: 'method_not_allowed' });
+  }
+
+  const { periodStart, periodEnd } = req.query;
+  if (!periodStart || !periodEnd || !dateRe.test(periodStart) || !dateRe.test(periodEnd)) {
+    return res.status(400).json({
+      error: 'invalid_request',
+      error_description: 'periodStart et periodEnd (format YYYY-MM-DD) sont requis',
+    });
+  }
+  if (periodStart > periodEnd) {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'periodStart doit etre avant ou egal a periodEnd' });
+  }
+
+  if (!(await getEstablishmentOr404(supabase, establishmentId, res))) return;
+
+  const { data, error } = await supabase.rpc('menu_engineering_matrix', {
+    p_establishment_id: establishmentId,
+    p_period_start: periodStart,
+    p_period_end: periodEnd,
+  });
+
+  if (error) {
+    console.error('menu/snapshot: erreur rpc menu_engineering_matrix', error);
+    return res.status(500).json({ error: 'server_error' });
+  }
+
+  const rows = (data || []).map((row) => ({
+    menu_item_id: row.menu_item_id,
+    period_start: periodStart,
+    period_end: periodEnd,
+    price: row.price,
+    estimated_cost: row.estimated_cost,
+    food_cost_pct: row.food_cost_pct,
+    margin_per_item: row.margin_per_item,
+    units_sold: row.units_sold,
+    total_margin: row.total_margin,
+    classification: row.classification,
+  }));
+
+  if (rows.length === 0) {
+    return res.status(200).json({ establishment_id: establishmentId, period_start: periodStart, period_end: periodEnd, snapshotted_count: 0 });
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from('menu_item_period_snapshots')
+    .upsert(rows, { onConflict: 'menu_item_id,period_start,period_end' })
+    .select('menu_item_id');
+
+  if (insertError) {
+    console.error('menu/snapshot: erreur upsert menu_item_period_snapshots', insertError);
+    return res.status(500).json({ error: 'server_error' });
+  }
+
+  return res.status(200).json({
+    establishment_id: establishmentId,
+    period_start: periodStart,
+    period_end: periodEnd,
+    snapshotted_count: (inserted || []).length,
+  });
+}
+
+// GET .../menu/history?menuItemId=...
+//
+// Renvoie l'historique des instantanes d'un plat (un par periode
+// capturee via /menu/snapshot), du plus ancien au plus recent, avec un
+// resume : total des ventes cumulees sur tout l'historique, et evolution
+// du prix / cout / marge entre le premier et le dernier instantane.
+async function handleHistory(req, res, supabase, establishmentId) {
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'method_not_allowed' });
+  }
+
+  const { menuItemId } = req.query;
+  if (!menuItemId || typeof menuItemId !== 'string') {
+    return res.status(400).json({ error: 'invalid_request', error_description: 'menuItemId requis' });
+  }
+
+  if (!(await getEstablishmentOr404(supabase, establishmentId, res))) return;
+
+  // Verifie que le menu_item appartient bien a l'establishment demande.
+  const { data: menuItem, error: menuItemError } = await supabase
+    .from('menu_items')
+    .select('id, name, menu_id, menus!inner(establishment_id)')
+    .eq('id', menuItemId)
+    .maybeSingle();
+
+  if (menuItemError) {
+    console.error('menu/history: erreur lookup menu_item', menuItemError);
+    return res.status(500).json({ error: 'server_error' });
+  }
+  if (!menuItem || menuItem.menus.establishment_id !== establishmentId) {
+    return res.status(404).json({ error: 'not_found', error_description: 'plat introuvable pour cet etablissement' });
+  }
+
+  const { data: snapshots, error: snapshotsError } = await supabase
+    .from('menu_item_period_snapshots')
+    .select('period_start, period_end, price, estimated_cost, food_cost_pct, margin_per_item, units_sold, total_margin, classification, captured_at')
+    .eq('menu_item_id', menuItemId)
+    .order('period_start', { ascending: true });
+
+  if (snapshotsError) {
+    console.error('menu/history: erreur lookup menu_item_period_snapshots', snapshotsError);
+    return res.status(500).json({ error: 'server_error' });
+  }
+
+  const rows = snapshots || [];
+  const totalUnitsSold = rows.reduce((sum, r) => sum + (r.units_sold || 0), 0);
+  const totalMarginGenerated = rows.reduce((sum, r) => sum + (r.total_margin !== null ? Number(r.total_margin) : 0), 0);
+
+  let evolution = null;
+  if (rows.length >= 2) {
+    const first = rows[0];
+    const last = rows[rows.length - 1];
+    const costChangePct = first.estimated_cost && Number(first.estimated_cost) > 0
+      ? Math.round(((Number(last.estimated_cost) - Number(first.estimated_cost)) / Number(first.estimated_cost)) * 10000) / 100
+      : null;
+    evolution = {
+      from_period: { start: first.period_start, end: first.period_end },
+      to_period: { start: last.period_start, end: last.period_end },
+      price_change: last.price !== null && first.price !== null ? Math.round((Number(last.price) - Number(first.price)) * 100) / 100 : null,
+      estimated_cost_change: last.estimated_cost !== null && first.estimated_cost !== null ? Math.round((Number(last.estimated_cost) - Number(first.estimated_cost)) * 100) / 100 : null,
+      estimated_cost_change_pct: costChangePct,
+      margin_per_item_change: last.margin_per_item !== null && first.margin_per_item !== null ? Math.round((Number(last.margin_per_item) - Number(first.margin_per_item)) * 100) / 100 : null,
+    };
+  }
+
+  return res.status(200).json({
+    establishment_id: establishmentId,
+    menu_item_id: menuItemId,
+    menu_item_name: menuItem.name,
+    snapshots_count: rows.length,
+    total_units_sold_all_time: totalUnitsSold,
+    total_margin_generated_all_time: Math.round(totalMarginGenerated * 100) / 100,
+    evolution,
+    snapshots: rows,
   });
 }
