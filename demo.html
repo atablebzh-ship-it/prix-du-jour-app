@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cours du Jour — Démo</title>
+<meta name="description" content="Démo de la matrice de rentabilité menu engineering pour éditeurs de caisse et hubs restauration.">
+<style>
+:root{
+  --ink:#14181f;
+  --paper:#faf7f0;
+  --surface:#ffffff;
+  --line:#e4ddcf;
+  --muted:#6b6459;
+  --accent:#c97a1f;
+  --accent-ink:#5b3a0f;
+  --good:#3f7a5c;
+  --good-bg:#e7f1ea;
+  --warn:#b6482f;
+  --warn-bg:#fbe9e3;
+  --neutral-bg:#efece2;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#f2efe6;
+    --paper:#15181d;
+    --surface:#1c2027;
+    --line:#333a44;
+    --muted:#9aa0aa;
+    --accent:#e2a24b;
+    --accent-ink:#f3d9ac;
+    --good:#6fbf94;
+    --good-bg:#1b3327;
+    --warn:#e08066;
+    --warn-bg:#3a201c;
+    --neutral-bg:#242932;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ink:#f2efe6;
+  --paper:#15181d;
+  --surface:#1c2027;
+  --line:#333a44;
+  --muted:#9aa0aa;
+  --accent:#e2a24b;
+  --accent-ink:#f3d9ac;
+  --good:#6fbf94;
+  --good-bg:#1b3327;
+  --warn:#e08066;
+  --warn-bg:#3a201c;
+  --neutral-bg:#242932;
+  color-scheme: dark;
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"IBM Plex Sans", system-ui, sans-serif;
+  padding-inline:20px;
+  padding-block:28px;
+}
+.wrap{max-width:1080px;margin:0 auto;}
+
+h1,h2,h3{font-family:"Fraunces", Georgia, serif; margin:0; text-wrap:balance;}
+.mono{font-family:"IBM Plex Mono", ui-monospace, monospace; font-variant-numeric:tabular-nums;}
+
+header.masthead{
+  display:flex; justify-content:space-between; align-items:flex-end; gap:16px;
+  flex-wrap:wrap;
+  border-bottom:2px solid var(--ink);
+  padding-bottom:18px; margin-bottom:28px;
+}
+.brand{display:flex; align-items:baseline; gap:10px;}
+.brand .mark{
+  font-family:"Fraunces", serif; font-weight:600; font-size:26px;
+  color:var(--accent-ink); background:var(--neutral-bg);
+  border:1.5px solid var(--ink); border-radius:6px;
+  width:38px; height:38px; display:inline-flex; align-items:center; justify-content:center;
+  flex-shrink:0;
+}
+.brand h1{font-size:22px; font-weight:600;}
+.brand .tag{font-size:12px; color:var(--muted); letter-spacing:.03em; margin-top:2px;}
+.meta{text-align:right; font-size:13px; color:var(--muted); line-height:1.5;}
+.meta strong{color:var(--ink); font-weight:600;}
+
+.badge-demo{
+  display:inline-block; font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+  padding:3px 9px; border-radius:999px; background:var(--neutral-bg); color:var(--muted);
+  border:1px solid var(--line); margin-bottom:6px;
+}
+
+.kpis{
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:14px;
+  margin-bottom:36px;
+}
+.kpi{
+  background:var(--surface); border:1px solid var(--line); border-radius:10px;
+  padding:16px 18px;
+}
+.kpi .label{font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em;}
+.kpi .value{font-family:"IBM Plex Mono", monospace; font-size:28px; font-weight:600; margin-top:6px; font-variant-numeric:tabular-nums;}
+.kpi .sub{font-size:12.5px; color:var(--muted); margin-top:4px;}
+
+section.matrix{margin-bottom:36px;}
+.section-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px; flex-wrap:wrap;}
+.section-head h2{font-size:19px;}
+.section-head p{margin:2px 0 0; font-size:13px; color:var(--muted); max-width:56ch;}
+
+.chart-card{
+  background:var(--surface); border:1px solid var(--line); border-radius:12px;
+  padding:20px; margin-bottom:20px;
+}
+svg text{fill:var(--muted); font-family:"IBM Plex Mono", monospace; font-size:11px;}
+svg .quadrant-label{fill:var(--muted); font-family:"IBM Plex Sans", sans-serif; font-size:11.5px; letter-spacing:.02em;}
+svg .axis-title{fill:var(--ink); font-family:"IBM Plex Sans", sans-serif; font-size:12px; font-weight:600;}
+svg .grid-line{stroke:var(--line); stroke-width:1;}
+svg .threshold-line{stroke:var(--muted); stroke-width:1; stroke-dasharray:4 4;}
+svg .dot-star{fill:var(--good);}
+svg .dot-warn{fill:var(--warn);}
+svg .dot-label{fill:var(--ink); font-family:"IBM Plex Sans", sans-serif; font-weight:600; font-size:12px;}
+
+.quad-grid{
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:14px;
+}
+.quad-card{
+  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px;
+  border-top:4px solid var(--line);
+}
+.quad-card.q-star{border-top-color:var(--good);}
+.quad-card.q-warn{border-top-color:var(--warn);}
+.quad-card.q-neutral{border-top-color:var(--accent);}
+.quad-card h3{font-size:14px; font-weight:600; margin-bottom:2px; font-family:"IBM Plex Sans",sans-serif; letter-spacing:.01em;}
+.quad-card .quad-desc{font-size:12px; color:var(--muted); margin-bottom:12px;}
+.dish{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  padding:9px 0; border-top:1px solid var(--line);
+}
+.dish:first-of-type{border-top:none;}
+.dish .name{font-size:13.5px; font-weight:500;}
+.dish .figs{font-size:12px; color:var(--muted); text-align:right; white-space:nowrap;}
+.dish .figs .pct{font-family:"IBM Plex Mono", monospace;}
+
+.pill{
+  display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:5px;
+  background:var(--neutral-bg); color:var(--muted); margin-left:6px; font-weight:500;
+}
+.pill.good{background:var(--good-bg); color:var(--good);}
+.pill.warn{background:var(--warn-bg); color:var(--warn);}
+
+.note-card{
+  background:var(--neutral-bg); border:1px solid var(--line); border-radius:10px;
+  padding:14px 16px; font-size:13px; color:var(--muted); margin-bottom:36px;
+  display:flex; gap:12px; align-items:flex-start;
+}
+.note-card .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:5px;flex-shrink:0;}
+.note-card strong{color:var(--ink);}
+
+footer.pitch{
+  border-top:2px solid var(--ink); padding-top:22px; margin-top:8px;
+  display:grid; grid-template-columns:1.3fr 1fr; gap:28px;
+}
+footer.pitch h2{font-size:19px; margin-bottom:10px;}
+footer.pitch p{font-size:13.5px; line-height:1.6; color:var(--muted); margin:0 0 10px;}
+footer.pitch .specs{
+  background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px 18px;
+  font-size:12.5px;
+}
+footer.pitch .specs div{display:flex; justify-content:space-between; padding:6px 0; border-top:1px solid var(--line);}
+footer.pitch .specs div:first-child{border-top:none;}
+footer.pitch .specs .k{color:var(--muted);}
+footer.pitch .specs .v{font-family:"IBM Plex Mono", monospace; text-align:right;}
+
+@media (max-width:640px){
+  footer.pitch{grid-template-columns:1fr;}
+  .meta{text-align:left;}
+  header.masthead{align-items:flex-start;}
+}
+</style>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="brand">
+      <span class="mark">Cj</span>
+      <div>
+        <h1>Cours du Jour</h1>
+        <div class="tag">Moteur de décision menu engineering</div>
+      </div>
+    </div>
+    <div class="meta">
+      <span class="badge-demo">Démonstration</span><br>
+      <strong>Le Petit Comptoir</strong> — établissement type<br>
+      Période analysée : 29 août – 27 sept. 2026 (30 j)
+    </div>
+  </header>
+
+  <div class="kpis">
+    <div class="kpi">
+      <div class="label">Plats analysés</div>
+      <div class="value">5</div>
+      <div class="sub">sur la carte du jour</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Marge générée (30j)</div>
+      <div class="value">1 544 €</div>
+      <div class="sub">sur les 4 plats classifiés</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Plats à surveiller</div>
+      <div class="value" style="color:var(--warn)">2</div>
+      <div class="sub">food cost au-dessus de l'objectif (30 %)</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Couverture prix marché</div>
+      <div class="value">87 %</div>
+      <div class="sub">du catalogue ingrédients, mis à jour chaque jour</div>
+    </div>
+  </div>
+
+  <section class="matrix">
+    <div class="section-head">
+      <div>
+        <h2>Matrice de rentabilité</h2>
+        <p>Marge par plat vendu (axe horizontal) contre volume de ventes sur la période (axe vertical). Les seuils sont recalculés automatiquement à partir de la carte réelle de l'établissement.</p>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <svg viewBox="0 0 720 380" width="100%" style="max-width:720px; display:block; margin:0 auto;" role="img" aria-label="Nuage de points marge par plat contre volume vendu">
+        <line class="grid-line" x1="70" y1="20" x2="70" y2="320"/>
+        <line class="grid-line" x1="70" y1="320" x2="680" y2="320"/>
+
+        <line class="threshold-line" x1="497" y1="20" x2="497" y2="320"/>
+        <line class="threshold-line" x1="70" y1="215" x2="680" y2="215"/>
+
+        <text class="quadrant-label" x="510" y="40">Star</text>
+        <text class="quadrant-label" x="85" y="40">Rentable, peu vendu</text>
+        <text class="quadrant-label" x="510" y="305">Populaire, peu rentable</text>
+        <text class="quadrant-label" x="85" y="305">À revoir</text>
+
+        <text class="axis-title" x="375" y="358" text-anchor="middle">Marge par plat vendu (€)</text>
+        <text class="axis-title" x="20" y="170" text-anchor="middle" transform="rotate(-90 20 170)">Unités vendues / 30j</text>
+
+        <text x="70" y="335" text-anchor="middle">0€</text>
+        <text x="290" y="335" text-anchor="middle">8€</text>
+        <text x="497" y="335" text-anchor="middle">15,4€</text>
+        <text x="680" y="335" text-anchor="middle">22€</text>
+        <text x="60" y="324" text-anchor="end">0</text>
+        <text x="60" y="219" text-anchor="end">17,5</text>
+        <text x="60" y="24" text-anchor="end">50</text>
+
+        <circle class="dot-star" cx="647" cy="50" r="7"/>
+        <text class="dot-label" x="647" y="36" text-anchor="middle">Entrecôte frites</text>
+
+        <circle class="dot-star" cx="623" cy="272" r="7"/>
+        <text class="dot-label" x="565" y="290" text-anchor="middle">Saumon sauce crème</text>
+
+        <circle class="dot-warn" cx="330" cy="80" r="7"/>
+        <text class="dot-label" x="330" y="66" text-anchor="middle">Pavé de saumon riz</text>
+
+        <circle class="dot-warn" cx="357" cy="278" r="7"/>
+        <text class="dot-label" x="357" y="296" text-anchor="middle">Tartare de bœuf</text>
+      </svg>
+    </div>
+
+    <div class="quad-grid">
+      <div class="quad-card q-star">
+        <h3>Star</h3>
+        <div class="quad-desc">Marge forte, volume fort — à protéger.</div>
+        <div class="dish">
+          <span class="name">Entrecôte frites</span>
+          <span class="figs">45 ventes · <span class="pct">13,3 %</span> food cost</span>
+        </div>
+      </div>
+
+      <div class="quad-card q-star">
+        <h3>Rentable, peu vendu</h3>
+        <div class="quad-desc">Marge forte, mais peu commandé — à mettre en avant.</div>
+        <div class="dish">
+          <span class="name">Saumon sauce crème</span>
+          <span class="figs">8 ventes · <span class="pct">9,4 %</span> food cost</span>
+        </div>
+      </div>
+
+      <div class="quad-card q-warn">
+        <h3>Populaire, peu rentable</h3>
+        <div class="quad-desc">Volume fort, marge sous l'objectif — repenser le prix ou la fiche technique.</div>
+        <div class="dish">
+          <span class="name">Pavé de saumon riz</span>
+          <span class="figs">40 ventes · <span class="pct">33,0 %</span> food cost</span>
+        </div>
+      </div>
+
+      <div class="quad-card q-warn">
+        <h3>À revoir</h3>
+        <div class="quad-desc">Marge faible, peu vendu — candidat à retrait ou refonte.</div>
+        <div class="dish">
+          <span class="name">Tartare de bœuf maison</span>
+          <span class="figs">7 ventes · <span class="pct">31,1 %</span> food cost</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="note-card">
+    <span class="dot"></span>
+    <div>
+      <strong>Plat du jour</strong> — 15 ventes sur la période, mais fiche technique absente : le système affiche <em>« données insuffisantes »</em> plutôt qu'un chiffre inventé. C'est un choix de conception&nbsp;: aucune recommandation n'est calculée sur une base incomplète.
+    </div>
+  </div>
+
+  <footer class="pitch">
+    <div>
+      <h2>Ce que voit le restaurateur, ce que vous intégrez</h2>
+      <p>Cette page présente le résultat visible côté restaurateur. Pour un éditeur de caisse, l'ensemble de ce calcul — classification, food cost, seuils de rentabilité — est exposé par une API dédiée, à connecter directement à vos données de vente existantes.</p>
+      <p>Les prix matière première (le « cours du jour ») sont synchronisés chaque nuit depuis des sources de mercuriale professionnelle, sans ressaisie côté restaurant.</p>
+      <p style="color:var(--ink); font-weight:500;">Démo API et intégration sur demande — coursdujour.fr@proton.me</p>
+    </div>
+    <div class="specs">
+      <div><span class="k">Authentification</span><span class="v">OAuth2 client credentials</span></div>
+      <div><span class="k">Intégration</span><span class="v">API push, sans ressaisie</span></div>
+      <div><span class="k">Sources prix marché</span><span class="v">Mercuriale pro, maj quotidienne</span></div>
+      <div><span class="k">Modèle</span><span class="v">Marque blanche, multi-établissement</span></div>
+      <div><span class="k">Statut</span><span class="v" style="color:var(--good)">API validée en production</span></div>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+// Suivi de consultation anonyme : une seule ligne insérée par visite, via la clé
+// publique (anon, insert-only — RLS empêche toute lecture/modification côté client).
+// Si un e-mail d'alerte Resend est configuré côté Supabase, il part automatiquement.
+(function () {
+  var SUPABASE_URL = "https://yplakrcrnihmuqjiiogt.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_tB1QyGx_dLIgO8rdxRi6VA_8B159dwH";
+  try {
+    fetch(SUPABASE_URL + "/rest/v1/page_views", {
+      method: "POST",
+      keepalive: true,
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": "Bearer " + SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        page: "demo",
+        referrer: document.referrer || null,
+        user_agent: navigator.userAgent || null
+      })
+    }).catch(function () { /* silencieux : le tracking ne doit jamais gêner l'affichage */ });
+  } catch (e) { /* no-op */ }
+})();
+</script>
+</body>
+</html>
