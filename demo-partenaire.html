@@ -446,6 +446,9 @@ render();
   var SUPABASE_URL = "https://yplakrcrnihmuqjiiogt.supabase.co";
   var SUPABASE_ANON_KEY = "sb_publishable_tB1QyGx_dLIgO8rdxRi6VA_8B159dwH";
   try {
+    // Identifiant du destinataire : lien du type https://.../demo-partenaire.html?r=zelty
+    var recipient = null;
+    try { recipient = (new URLSearchParams(location.search).get("r") || "").slice(0, 40) || null; } catch (e) { /* no-op */ }
     fetch(SUPABASE_URL + "/rest/v1/page_views", {
       method: "POST",
       keepalive: true,
@@ -455,8 +458,9 @@ render();
         "Authorization": "Bearer " + SUPABASE_ANON_KEY
       },
       body: JSON.stringify({
-        page: "demo",
+        page: "demo-partenaire",
         referrer: document.referrer || null,
+        recipient: recipient,
         user_agent: navigator.userAgent || null
       })
     }).catch(function () { /* silencieux : le tracking ne doit jamais gêner l'affichage */ });
