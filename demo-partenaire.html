@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cours du Jour — Démo interactive</title>
+<meta name="description" content="Voyez comment une variation du prix d'un ingrédient change la rentabilité de chaque plat, et comment l'API Cours du Jour s'intègre à un logiciel de caisse ou à un hub.">
+<style>
+:root{
+  --ink:#14181f;
+  --paper:#faf7f0;
+  --surface:#ffffff;
+  --line:#e4ddcf;
+  --muted:#6b6459;
+  --accent:#c97a1f;
+  --accent-ink:#5b3a0f;
+  --good:#3f7a5c;
+  --good-bg:#e7f1ea;
+  --warn:#b6482f;
+  --warn-bg:#fbe9e3;
+  --neutral-bg:#efece2;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#f2efe6;
+    --paper:#15181d;
+    --surface:#1c2027;
+    --line:#333a44;
+    --muted:#9aa0aa;
+    --accent:#e2a24b;
+    --accent-ink:#f3d9ac;
+    --good:#6fbf94;
+    --good-bg:#1b3327;
+    --warn:#e08066;
+    --warn-bg:#3a201c;
+    --neutral-bg:#242932;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ink:#f2efe6;
+  --paper:#15181d;
+  --surface:#1c2027;
+  --line:#333a44;
+  --muted:#9aa0aa;
+  --accent:#e2a24b;
+  --accent-ink:#f3d9ac;
+  --good:#6fbf94;
+  --good-bg:#1b3327;
+  --warn:#e08066;
+  --warn-bg:#3a201c;
+  --neutral-bg:#242932;
+  color-scheme: dark;
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:var(--paper);
+  color:var(--ink);
+  font-family:"IBM Plex Sans", system-ui, sans-serif;
+  padding-inline:20px;
+  padding-block:28px;
+}
+.wrap{max-width:1080px;margin:0 auto;}
+
+h1,h2,h3{font-family:"Fraunces", Georgia, serif; margin:0; text-wrap:balance;}
+.mono{font-family:"IBM Plex Mono", ui-monospace, monospace; font-variant-numeric:tabular-nums;}
+
+header.masthead{
+  display:flex; justify-content:space-between; align-items:flex-end; gap:16px;
+  flex-wrap:wrap;
+  border-bottom:2px solid var(--ink);
+  padding-bottom:18px; margin-bottom:28px;
+}
+.brand{display:flex; align-items:baseline; gap:10px;}
+.brand .mark{
+  font-family:"Fraunces", serif; font-weight:600; font-size:26px;
+  color:var(--accent-ink); background:var(--neutral-bg);
+  border:1.5px solid var(--ink); border-radius:6px;
+  width:38px; height:38px; display:inline-flex; align-items:center; justify-content:center;
+  flex-shrink:0;
+}
+.brand h1{font-size:22px; font-weight:600;}
+.brand .tag{font-size:12px; color:var(--muted); letter-spacing:.03em; margin-top:2px;}
+.meta{text-align:right; font-size:13px; color:var(--muted); line-height:1.5;}
+.meta strong{color:var(--ink); font-weight:600;}
+
+.badge-demo{
+  display:inline-block; font-size:11px; letter-spacing:.06em; text-transform:uppercase;
+  padding:3px 9px; border-radius:999px; background:var(--neutral-bg); color:var(--muted);
+  border:1px solid var(--line); margin-bottom:6px;
+}
+
+.kpis{
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(180px,1fr)); gap:14px;
+  margin-bottom:36px;
+}
+.kpi{
+  background:var(--surface); border:1px solid var(--line); border-radius:10px;
+  padding:16px 18px;
+}
+.kpi .label{font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em;}
+.kpi .value{font-family:"IBM Plex Mono", monospace; font-size:28px; font-weight:600; margin-top:6px; font-variant-numeric:tabular-nums;}
+.kpi .sub{font-size:12.5px; color:var(--muted); margin-top:4px;}
+
+section.matrix{margin-bottom:36px;}
+.section-head{display:flex; align-items:baseline; justify-content:space-between; gap:12px; margin-bottom:14px; flex-wrap:wrap;}
+.section-head h2{font-size:19px;}
+.section-head p{margin:2px 0 0; font-size:13px; color:var(--muted); max-width:56ch;}
+
+.chart-card{
+  background:var(--surface); border:1px solid var(--line); border-radius:12px;
+  padding:20px; margin-bottom:20px;
+}
+svg text{fill:var(--muted); font-family:"IBM Plex Mono", monospace; font-size:11px;}
+svg .quadrant-label{fill:var(--muted); font-family:"IBM Plex Sans", sans-serif; font-size:11.5px; letter-spacing:.02em;}
+svg .axis-title{fill:var(--ink); font-family:"IBM Plex Sans", sans-serif; font-size:12px; font-weight:600;}
+svg .grid-line{stroke:var(--line); stroke-width:1;}
+svg .threshold-line{stroke:var(--muted); stroke-width:1; stroke-dasharray:4 4;}
+svg .dot-star{fill:var(--good);}
+svg .dot-warn{fill:var(--warn);}
+svg .dot-label{fill:var(--ink); font-family:"IBM Plex Sans", sans-serif; font-weight:600; font-size:12px;}
+
+.quad-grid{
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(240px,1fr)); gap:14px;
+}
+.quad-card{
+  background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:16px 18px;
+  border-top:4px solid var(--line);
+}
+.quad-card.q-star{border-top-color:var(--good);}
+.quad-card.q-warn{border-top-color:var(--warn);}
+.quad-card.q-neutral{border-top-color:var(--accent);}
+.quad-card h3{font-size:14px; font-weight:600; margin-bottom:2px; font-family:"IBM Plex Sans",sans-serif; letter-spacing:.01em;}
+.quad-card .quad-desc{font-size:12px; color:var(--muted); margin-bottom:12px;}
+.dish{
+  display:flex; justify-content:space-between; align-items:baseline; gap:10px;
+  padding:9px 0; border-top:1px solid var(--line);
+}
+.dish:first-of-type{border-top:none;}
+.dish .name{font-size:13.5px; font-weight:500;}
+.dish .figs{font-size:12px; color:var(--muted); text-align:right; white-space:nowrap;}
+.dish .figs .pct{font-family:"IBM Plex Mono", monospace;}
+
+.pill{
+  display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:5px;
+  background:var(--neutral-bg); color:var(--muted); margin-left:6px; font-weight:500;
+}
+.pill.good{background:var(--good-bg); color:var(--good);}
+.pill.warn{background:var(--warn-bg); color:var(--warn);}
+
+.note-card{
+  background:var(--neutral-bg); border:1px solid var(--line); border-radius:10px;
+  padding:14px 16px; font-size:13px; color:var(--muted); margin-bottom:36px;
+  display:flex; gap:12px; align-items:flex-start;
+}
+.note-card .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);margin-top:5px;flex-shrink:0;}
+.note-card strong{color:var(--ink);}
+
+footer.pitch{
+  border-top:2px solid var(--ink); padding-top:22px; margin-top:8px;
+  display:grid; grid-template-columns:1.3fr 1fr; gap:28px;
+}
+footer.pitch h2{font-size:19px; margin-bottom:10px;}
+footer.pitch p{font-size:13.5px; line-height:1.6; color:var(--muted); margin:0 0 10px;}
+footer.pitch .specs{
+  background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:16px 18px;
+  font-size:12.5px;
+}
+footer.pitch .specs div{display:flex; justify-content:space-between; padding:6px 0; border-top:1px solid var(--line);}
+footer.pitch .specs div:first-child{border-top:none;}
+footer.pitch .specs .k{color:var(--muted);}
+footer.pitch .specs .v{font-family:"IBM Plex Mono", monospace; text-align:right;}
+
+@media (max-width:640px){
+  footer.pitch{grid-template-columns:1fr;}
+  .meta{text-align:left;}
+  header.masthead{align-items:flex-start;}
+}
+
+.hero{margin:6px 0 30px;}
+.hero h2{font-size:clamp(24px,4.4vw,36px);line-height:1.15;font-weight:600;max-width:20ch;}
+.hero p{font-size:15px;color:var(--muted);max-width:60ch;line-height:1.6;margin:12px 0 0;}
+.step{margin:0 0 40px;}
+.step-head{display:flex;gap:12px;align-items:baseline;margin-bottom:12px;}
+.step-num{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--accent-ink);background:var(--neutral-bg);border:1px solid var(--line);border-radius:999px;padding:3px 10px;white-space:nowrap;}
+.step-head h2{font-size:20px;}
+.step-lead{font-size:13.5px;color:var(--muted);max-width:64ch;margin:0 0 14px;line-height:1.55;}
+.card{min-width:0;overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;}
+table.menu{width:100%;border-collapse:collapse;font-size:13px;}
+table.menu th{font-weight:500;color:var(--muted);text-align:right;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;padding:6px 8px;border-bottom:1px solid var(--line);}
+table.menu th:first-child,table.menu td:first-child{text-align:left;}
+table.menu td{white-space:nowrap;padding:9px 8px;border-top:1px solid var(--line);text-align:right;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;}
+table.menu td:first-child{white-space:normal;font-family:"IBM Plex Sans",sans-serif;font-weight:500;}
+table.menu td .recipe{display:block;font-family:"IBM Plex Sans",sans-serif;font-weight:400;font-size:11.5px;color:var(--muted);margin-top:2px;}
+.cl{display:inline-block;font-family:"IBM Plex Sans",sans-serif;font-size:11px;padding:2px 8px;border-radius:999px;white-space:nowrap;}
+.cl.star{background:var(--good-bg);color:var(--good);}
+.cl.rentable_peu_vendu{background:var(--neutral-bg);color:var(--accent-ink);}
+.cl.populaire_peu_rentable{background:var(--warn-bg);color:var(--warn);}
+.cl.a_revoir{background:var(--warn-bg);color:var(--warn);}
+.cl.donnees_insuffisantes{background:var(--neutral-bg);color:var(--muted);}
+tr.changed td{background:color-mix(in srgb,var(--accent) 10%,transparent);}
+.market{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.ing{display:grid;grid-template-columns:110px 1fr 120px;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--line);font-size:13px;}
+.ing:first-child{border-top:none;}
+.ing .p{font-family:"IBM Plex Mono",monospace;text-align:right;font-size:12.5px;}
+.ing .p .d{display:block;font-size:11px;}
+.d.up{color:var(--warn);} .d.down{color:var(--good);}
+input[type=range]{width:100%;accent-color:var(--accent);}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 14px;}
+button.b{font:inherit;font-size:13px;font-weight:500;padding:8px 14px;border-radius:999px;border:1.5px solid var(--ink);background:var(--surface);color:var(--ink);cursor:pointer;}
+button.b.primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+button.b[aria-pressed=true]{background:var(--ink);color:var(--paper);}
+.alerts{display:grid;gap:10px;}
+.alert{border-radius:10px;padding:11px 14px;font-size:13px;line-height:1.5;border:1px solid var(--line);background:var(--surface);}
+.alert .t{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.04em;text-transform:uppercase;display:block;margin-bottom:2px;}
+.alert.risk{border-left:4px solid var(--warn);} .alert.risk .t{color:var(--warn);}
+.alert.opp{border-left:4px solid var(--good);} .alert.opp .t{color:var(--good);}
+.alert.chg{border-left:4px solid var(--accent);} .alert.chg .t{color:var(--accent-ink);}
+.empty{font-size:13px;color:var(--muted);padding:10px 2px;}
+.reco{font-size:13px;line-height:1.55;padding:10px 0;border-top:1px solid var(--line);}
+.reco:first-child{border-top:none;}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;}
+pre.code{margin:0;background:#14181f;color:#e8e4d8;border-radius:10px;padding:14px 16px;font-family:"IBM Plex Mono",monospace;font-size:12px;line-height:1.55;overflow:auto;max-height:420px;}
+.fine{font-size:12px;color:var(--muted);margin:8px 2px 0;line-height:1.5;}
+.ask{background:var(--ink);color:var(--paper);border-radius:14px;padding:24px 26px;margin-top:10px;}
+.ask h2{font-size:22px;margin-bottom:8px;} .ask p{margin:0 0 6px;font-size:14px;line-height:1.6;opacity:.9;}
+.ask a{color:var(--accent);font-weight:600;}
+@media (max-width:760px){.chart-card{overflow-x:auto;padding:12px;} #matrix{min-width:560px;} .market>*{min-width:0;} table.menu th,table.menu td{padding:8px 4px;} .ing{grid-template-columns:90px 1fr 96px;} .market{grid-template-columns:1fr;} table.menu .hide-s{display:none;} .ing{grid-template-columns:90px 1fr 96px;}}
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div class="brand"><span class="mark">Cj</span><div><h1>Cours du Jour</h1><div class="tag">Aide à la décision pour la carte des restaurateurs</div></div></div>
+  <div class="meta"><span class="badge-demo">Démonstration · données d'exemple</span><br>Restaurant fictif « Brasserie Exemple »</div>
+</header>
+
+<div class="hero">
+  <h2>Le prix d'un ingrédient bouge. La carte, elle, ne le sait pas.</h2>
+  <p>Un plat peut cesser d'être rentable en quelques semaines sans que personne ne s'en aperçoive. Cours du Jour recalcule en continu le coût réel de chaque plat à partir du prix du marché, le classe, et prévient le restaurateur. Faites bouger le marché ci-dessous : tout se recalcule sous vos yeux.</p>
+</div>
+
+<section class="step">
+  <div class="step-head"><span class="step-num">1 · La carte</span><h2>Ce que le logiciel de caisse connaît déjà</h2></div>
+  <p class="step-lead">Pour chaque plat : le prix de vente, les ventes sur 30 jours (remontées par la caisse) et la fiche technique. Le coût matière se calcule en croisant la fiche technique avec le prix du marché de chaque ingrédient.</p>
+  <div class="card"><table class="menu" id="menu"></table></div>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="step-num">2 · Le cours du jour</span><h2>Faites bouger le marché</h2></div>
+  <p class="step-lead">Chaque ingrédient a un prix de marché qui varie. Déplacez un curseur, ou lancez un scénario, et regardez les plats changer de catégorie dans le tableau du dessus et dans la matrice ci-dessous.</p>
+  <div class="btns">
+    <button class="b primary" id="scn-hausse">▶ Scénario : le bœuf +35 % et le saumon +30 %</button>
+    <button class="b" id="scn-reset">Revenir au marché d'aujourd'hui</button>
+  </div>
+  <div class="market">
+    <div class="card" id="sliders"></div>
+    <div class="card"><h3 style="font-family:'IBM Plex Sans',sans-serif;font-size:14px;margin-bottom:8px">Alertes envoyées au restaurateur</h3><div class="alerts" id="alerts"></div></div>
+  </div>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="step-num">3 · La matrice</span><h2>Quels plats protéger, lesquels revoir</h2></div>
+  <p class="step-lead">Marge par plat vendu (horizontal) contre volume vendu (vertical). Les seuils se recalculent à partir de la carte : volume = 70 % de la moyenne, marge = marge moyenne pondérée par les ventes (règles de la documentation de l'API).</p>
+  <div class="chart-card"><svg id="matrix" viewBox="0 0 720 380" width="100%" style="max-width:720px;display:block;margin:0 auto" role="img" aria-label="Matrice marge contre volume"></svg></div>
+  <div class="card"><h3 style="font-family:'IBM Plex Sans',sans-serif;font-size:14px;margin-bottom:6px">Recommandations affichées dans la caisse</h3><div id="recos"></div></div>
+</section>
+
+<section class="step">
+  <div class="step-head"><span class="step-num">4 · L'intégration</span><h2>Ce que votre équipe technique branche</h2></div>
+  <p class="step-lead">Tout ce que vous venez de voir est exposé par l'API. Le format ci-dessous est celui de la documentation ; les valeurs correspondent à l'écran, en données d'exemple.</p>
+  <div class="tabs" id="tabs"></div>
+  <pre class="code" id="code"></pre>
+  <p class="fine">Authentification OAuth2 (client credentials), réponses en JSON, montants en euros. Les notifications (webhooks) sont signées en HMAC-SHA256 et se déclenchent à chaque instantané mensuel.</p>
+</section>
+
+<div class="ask">
+  <h2>Et maintenant ?</h2>
+  <p>Je propose un échange de 20 minutes pour voir comment cela pourrait s'intégrer aux restaurateurs que vous accompagnez, avec vos propres données si vous le souhaitez.</p>
+  <p>Xavier Guerin — <a href="mailto:coursdujour.fr@proton.me">coursdujour.fr@proton.me</a></p>
+</div>
+
+</div>
+
+<script>
+const BASE_URL = "https://prix-du-jour-app.vercel.app";
+const ING = {
+  bavette:{n:"Bavette de bœuf",p:19},
+  saumon:{n:"Saumon",p:17.5},
+  cabillaud:{n:"Cabillaud",p:16},
+  volaille:{n:"Volaille",p:8.5},
+  parmesan:{n:"Parmesan",p:18},
+  creme:{n:"Crème",p:4.2},
+  aubergine:{n:"Aubergine",p:3.8},
+  courgette:{n:"Courgette",p:1.9},
+  tomate:{n:"Tomate",p:2.8},
+  pdt:{n:"Pommes de terre",p:1.2},
+  riz:{n:"Riz",p:2.4},
+  pates:{n:"Pâtes",p:2.0}
+};
+const SLIDERS = ["bavette","saumon","aubergine","creme"];
+const DISHES = [
+  {n:"Bavette frites",p:19.5,u:62,r:{bavette:.25,pdt:.3}},
+  {n:"Pavé de saumon riz",p:17,u:48,r:{saumon:.2,riz:.1,creme:.04}},
+  {n:"Suprême de volaille",p:16.5,u:41,r:{volaille:.22,pdt:.25,creme:.05}},
+  {n:"Tagliatelles parmesan",p:13.5,u:24,r:{pates:.12,parmesan:.03,creme:.08}},
+  {n:"Ratatouille",p:13,u:16,r:{aubergine:.15,courgette:.15,tomate:.15}},
+  {n:"Cabillaud rôti",p:21,u:12,r:{cabillaud:.2,riz:.08,tomate:.1}},
+  {n:"Tartare de bœuf",p:16,u:9,r:{bavette:.22,pdt:.2}},
+  {n:"Plat du jour",p:15,u:15,r:null}
+];
+const LABEL = {star:"Star",rentable_peu_vendu:"Rentable, peu vendu",populaire_peu_rentable:"Populaire, peu rentable",a_revoir:"À revoir",donnees_insuffisantes:"Données insuffisantes"};
+const eur = n => Number(n).toFixed(2) + " EUR";
+const fmt = n => n.toFixed(2).replace(".", ",");
+const mult = {bavette:1, saumon:1, aubergine:1, creme:1};
+const price = k => ING[k].p * (mult[k] ?? 1);
+
+function compute(getPrice){
+  const rows = DISHES.map(d=>{
+    if(!d.r) return {...d, cost:null, margin:null, fc:null, total:null, cl:"donnees_insuffisantes"};
+    const cost = Object.entries(d.r).reduce((s,[k,q])=>s+q*getPrice(k),0);
+    return {...d, cost, margin:d.p-cost, fc:cost/d.p*100, total:(d.p-cost)*d.u};
+  });
+  const ok = rows.filter(r=>r.cost!==null);
+  const tu = ok.reduce((s,r)=>s+r.u,0);
+  const popT = 0.7*tu/ok.length;
+  const profT = ok.reduce((s,r)=>s+r.margin*r.u,0)/tu;
+  ok.forEach(r=>{ r.cl = r.u>=popT ? (r.margin>=profT?"star":"populaire_peu_rentable") : (r.margin>=profT?"rentable_peu_vendu":"a_revoir"); });
+  return {rows, popT, profT};
+}
+function reco(r){
+  const name = r.n.toUpperCase();
+  switch(r.cl){
+    case "star": return name+" - STAR DE LA CARTE : "+r.u+" ventes x "+eur(r.margin)+" de marge = "+eur(r.total)+" generes. Forte popularite et excellente rentabilite -> a conserver et mettre en avant.";
+    case "rentable_peu_vendu": return name+" - RENTABLE MAIS PEU VENDU : marge unitaire correcte ("+eur(r.margin)+"), mais seulement "+r.u+" ventes sur la periode. Le probleme n'est peut-etre pas le cout matiere -> tester le prix, la presentation ou le positionnement du plat.";
+    case "populaire_peu_rentable": return name+" - POPULAIRE MAIS PEU RENTABLE : "+r.u+" ventes, mais seulement "+eur(r.margin)+" de marge par plat (food cost "+r.fc.toFixed(2)+"%). Priorite absolue -> revoir la recette ou ajuster le prix.";
+    case "a_revoir": return name+" - A ABANDONNER / REVOIR : peu vendu ("+r.u+" ventes) et peu rentable ("+eur(r.margin)+" de marge). Envisager de retirer le plat de la carte ou de le repositionner completement.";
+    default: return name+" : donnees insuffisantes sur cette periode (aucune vente enregistree, ou fiche technique/cout matiere incomplet) pour classer ce plat.";
+  }
+}
+const base = compute(k=>ING[k].p);
+
+function render(){
+  const cur = compute(price);
+  // table
+  const t = document.getElementById("menu");
+  t.innerHTML = '<tr><th>Plat</th><th>Prix</th><th class="hide-s">Ventes 30 j</th><th class="hide-s">Coût matière</th><th>Food cost</th><th style="text-align:right">Catégorie</th></tr>' +
+    cur.rows.map((r,i)=>{
+      const changed = r.cl !== base.rows[i].cl;
+      const recipe = r.r ? Object.entries(r.r).map(([k,q])=>ING[k].n.toLowerCase()+" "+q*1000+" g").join(" · ") : "fiche technique absente";
+      return '<tr class="'+(changed?"changed":"")+'"><td>'+r.n+'<span class="recipe">'+recipe+'</span></td><td>'+fmt(r.p)+' €</td><td class="hide-s">'+r.u+'</td><td class="hide-s">'+(r.cost===null?"—":fmt(r.cost)+" €")+'</td><td>'+(r.fc===null?"—":r.fc.toFixed(1).replace(".",",")+" %")+'</td><td style="text-align:right"><span class="cl '+r.cl+'">'+LABEL[r.cl]+'</span></td></tr>';
+    }).join("");
+  // sliders (built once, only update labels)
+  SLIDERS.forEach(k=>{
+    const el = document.getElementById("p-"+k); if(!el) return;
+    const pct = (mult[k]-1)*100;
+    el.innerHTML = fmt(price(k))+' €/kg<span class="d '+(pct>0.05?"up":pct<-0.05?"down":"")+'">'+(Math.abs(pct)<0.05?"inchangé":(pct>0?"+":"")+pct.toFixed(0)+" %")+'</span>';
+    const s = document.getElementById("s-"+k); if(s && Number(s.value)!==Math.round(pct)) s.value = Math.round(pct);
+  });
+  // alerts: same thresholds as the API defaults (risk >= +10 %, opportunity <= -5 %)
+  const al = [];
+  const risky = {}, fav = {};
+  Object.keys(ING).forEach(k=>{
+    const ch = (price(k)/ING[k].p-1)*100;
+    if(ch>=10) risky[k]=ch; else if(ch<=-5) fav[k]=ch;
+  });
+  const touches = (d,set)=>Object.keys(d.r||{}).filter(k=>k in set);
+  cur.rows.forEach(r=>{ if(!r.r) return;
+    const rk = touches(r,risky), fv = touches(r,fav);
+    if(rk.length) al.push('<div class="alert risk"><span class="t">price_risk</span><b>'+r.n+'</b> : '+rk.map(k=>ING[k].n.toLowerCase()+" +"+risky[k].toFixed(0)+" %").join(", ")+' — le food cost passe à '+r.fc.toFixed(1).replace(".",",")+' %.</div>');
+    if(fv.length) al.push('<div class="alert opp"><span class="t">price_opportunity</span><b>'+r.n+'</b> : '+fv.map(k=>ING[k].n.toLowerCase()+" "+fav[k].toFixed(0)+" %").join(", ")+' — marge en amélioration.</div>');
+  });
+  cur.rows.forEach((r,i)=>{ if(r.cl!==base.rows[i].cl) al.push('<div class="alert chg"><span class="t">classification_change</span><b>'+r.n+'</b> : '+LABEL[base.rows[i].cl]+' → <b>'+LABEL[r.cl]+'</b></div>'); });
+  document.getElementById("alerts").innerHTML = al.length ? al.join("") : '<div class="empty">Aucune alerte : le marché est stable. Déplacez un curseur.</div>';
+  // recos for priority items
+  const pri = cur.rows.filter(r=>r.cl==="populaire_peu_rentable"||r.cl==="a_revoir").sort((a,b)=>b.u-a.u);
+  document.getElementById("recos").innerHTML = pri.length ? pri.map(r=>'<div class="reco">'+reco(r)+'</div>').join("") : '<div class="empty">Aucun plat prioritaire.</div>';
+  drawMatrix(cur);
+  window.__cur = cur; renderCode();
+}
+function drawMatrix(cur){
+  const ok = cur.rows.filter(r=>r.cost!==null);
+  const mMin=Math.min(...ok.map(r=>r.margin),cur.profT)-1.5, mMax=Math.max(...ok.map(r=>r.margin),cur.profT)+1.5;
+  const uMax=Math.max(...ok.map(r=>r.u))*1.15;
+  const X=m=>70+(m-mMin)/(mMax-mMin)*610, Y=u=>320-u/uMax*300;
+  let s='<line class="grid-line" x1="70" y1="20" x2="70" y2="320"/><line class="grid-line" x1="70" y1="320" x2="680" y2="320"/>';
+  s+='<line class="threshold-line" x1="'+X(cur.profT)+'" y1="20" x2="'+X(cur.profT)+'" y2="320"/><line class="threshold-line" x1="70" y1="'+Y(cur.popT)+'" x2="680" y2="'+Y(cur.popT)+'"/>';
+  s+='<text class="quadrant-label" x="'+(X(cur.profT)+8)+'" y="38">Star</text><text class="quadrant-label" x="82" y="38">Populaire, peu rentable</text><text class="quadrant-label" x="'+(X(cur.profT)+8)+'" y="310">Rentable, peu vendu</text><text class="quadrant-label" x="82" y="310">À revoir</text>';
+  s+='<text class="axis-title" x="375" y="358" text-anchor="middle">Marge par plat vendu (€)</text><text class="axis-title" x="20" y="170" text-anchor="middle" transform="rotate(-90 20 170)">Unités vendues / 30 j</text>';
+  ok.forEach(r=>{
+    const good = r.cl==="star"||r.cl==="rentable_peu_vendu";
+    const x=X(r.margin), y=Y(r.u), left = x>560;
+    s+='<circle class="'+(good?"dot-star":"dot-warn")+'" cx="'+x+'" cy="'+y+'" r="7" style="transition:all .5s"/><text class="dot-label" x="'+(left?x-12:x+12)+'" y="'+(y+4)+'" text-anchor="'+(left?"end":"start")+'" style="transition:all .5s">'+r.n+'</text>';
+  });
+  document.getElementById("matrix").innerHTML = s;
+}
+// sliders
+(function(){
+  const box = document.getElementById("sliders");
+  box.innerHTML = '<h3 style="font-family:\'IBM Plex Sans\',sans-serif;font-size:14px;margin-bottom:6px">Prix du marché (€/kg)</h3>' + SLIDERS.map(k=>'<div class="ing"><span>'+ING[k].n+'</span><input type="range" id="s-'+k+'" min="-30" max="50" step="1" value="0" aria-label="Variation du prix : '+ING[k].n+'"><span class="p" id="p-'+k+'"></span></div>').join("");
+  SLIDERS.forEach(k=>document.getElementById("s-"+k).addEventListener("input",e=>{ mult[k]=1+Number(e.target.value)/100; render(); }));
+  document.getElementById("scn-hausse").onclick=()=>{ Object.assign(mult,{bavette:1.35,saumon:1.3,aubergine:1,creme:1}); render(); };
+  document.getElementById("scn-reset").onclick=()=>{ Object.assign(mult,{bavette:1,saumon:1,aubergine:1,creme:1}); render(); };
+})();
+// API tab
+const TABS = ["Authentification","Matrice (engineering)","Risques prix","Webhook"];
+let tab = 1;
+(function(){
+  const box = document.getElementById("tabs");
+  box.innerHTML = TABS.map((t,i)=>'<button class="b" data-i="'+i+'" aria-pressed="'+(i===tab)+'">'+t+'</button>').join("");
+  box.onclick = e=>{ const b=e.target.closest("button"); if(!b) return; tab=Number(b.dataset.i); [...box.children].forEach((c,i)=>c.setAttribute("aria-pressed",i===tab)); renderCode(); };
+})();
+const r2 = n => Math.round(n*100)/100;
+function renderCode(){
+  const cur = window.__cur; if(!cur) return;
+  const items = cur.rows.map(r=>({menu_item_id:"…", menu_item_name:r.n, price:r.p, estimated_cost:r.cost===null?null:r2(r.cost), food_cost_pct:r.fc===null?null:r2(r.fc), viable:r.fc===null?null:r.fc<=30, margin_per_item:r.margin===null?null:r2(r.margin), units_sold:r.u, total_margin:r.total===null?null:r2(r.total), classification:r.cl, recommendation:reco(r)}));
+  let out="";
+  if(tab===0){
+    out = "POST "+BASE_URL+"/api/oauth/token\n\n"+JSON.stringify({grant_type:"client_credentials",client_id:"votre-client-id",client_secret:"votre-client-secret"},null,2)+"\n\n// Réponse (200)\n"+JSON.stringify({access_token:"eyJ...",token_type:"Bearer",expires_in:3600},null,2)+"\n\n// Toutes les autres routes :\nAuthorization: Bearer <access_token>";
+  } else if(tab===1){
+    out = "GET "+BASE_URL+"/api/establishments/{establishmentId}/menu/engineering?periodStart=2026-09-01&periodEnd=2026-09-30\n\n// Réponse (200) — données d'exemple de cet écran\n"+JSON.stringify({establishment_id:"…",period_start:"2026-09-01",period_end:"2026-09-30",popularity_threshold:r2(cur.popT),profitability_threshold:r2(cur.profT),items},null,2);
+  } else if(tab===2){
+    const risks = cur.rows.filter(r=>r.r).map(r=>{
+      const ri = Object.keys(r.r).map(k=>({k,ch:(price(k)/ING[k].p-1)*100})).filter(x=>x.ch>=10);
+      return ri.length?{menu_item_id:"…",menu_item_name:r.n,price:r.p,food_cost_pct:r2(r.fc),viable:r.fc<=30,risky_ingredients:ri.map(x=>({ingredient:ING[x.k].n,pct_change:r2(x.ch),latest_price:r2(price(x.k))}))}:null;
+    }).filter(Boolean);
+    out = "GET "+BASE_URL+"/api/establishments/{establishmentId}/menu/price-risks?lookbackDays=30&minIncreasePct=10\n\n// Réponse (200) — données d'exemple de cet écran\n"+JSON.stringify({establishment_id:"…",lookback_days:30,min_increase_pct:10,risks},null,2);
+  } else {
+    const ev = cur.rows.map((r,i)=>r.cl!==base.rows[i].cl?{type:"classification_change",menu_item_id:"…",menu_item_name:r.n,previous_classification:base.rows[i].cl,new_classification:r.cl,margin_per_item:r2(r.margin),units_sold:r.u}:null).filter(Boolean);
+    out = "POST "+BASE_URL+"/api/webhooks\n"+JSON.stringify({url:"https://votre-caisse.fr/webhooks/cours-du-jour",events:["classification_change","price_risk","price_opportunity"]},null,2)+"\n\n// Ce que reçoit votre serveur (en-tête X-Webhook-Signature: sha256=<hmac>)\n"+(ev.length?JSON.stringify({establishment_id:"…",establishment_name:"Brasserie Exemple",sent_at:"2026-10-01T06:00:00.000Z",events:ev},null,2):"// Aucun changement de catégorie : lancez le scénario à l'étape 2.");
+  }
+  document.getElementById("code").textContent = out;
+}
+render();
+</script>
+<script>
+// Suivi de consultation anonyme : une seule ligne insérée par visite, via la clé
+// publique (anon, insert-only — RLS empêche toute lecture/modification côté client).
+// Si un e-mail d'alerte Resend est configuré côté Supabase, il part automatiquement.
+(function () {
+  var SUPABASE_URL = "https://yplakrcrnihmuqjiiogt.supabase.co";
+  var SUPABASE_ANON_KEY = "sb_publishable_tB1QyGx_dLIgO8rdxRi6VA_8B159dwH";
+  try {
+    fetch(SUPABASE_URL + "/rest/v1/page_views", {
+      method: "POST",
+      keepalive: true,
+      headers: {
+        "Content-Type": "application/json",
+        "apikey": SUPABASE_ANON_KEY,
+        "Authorization": "Bearer " + SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({
+        page: "demo",
+        referrer: document.referrer || null,
+        user_agent: navigator.userAgent || null
+      })
+    }).catch(function () { /* silencieux : le tracking ne doit jamais gêner l'affichage */ });
+  } catch (e) { /* no-op */ }
+})();
+</script>
+</body>
+</html>
